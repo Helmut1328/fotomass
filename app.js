@@ -5,7 +5,6 @@
   const canvas = $("editorCanvas");
   const ctx = canvas.getContext("2d");
   const emptyState = $("emptyState");
-  const viewport = $("viewport");
   const canvasWrap = $("canvasWrap");
   const crosshairEl = $("crosshair");
   const unitSelect = $("unitSelect");
@@ -36,23 +35,21 @@
   let pendingTextPoint = null;
   let editingMeasureId = null;
   let snapPoint = null;
-  let recognition = null;
-  let isListening = false;
-  let speechTimeout = null;
-  let speechSupported = false;
 
-  // Zoom / Pan
-  let viewScale = 1;       // Anzeigemaßstab (1 = fit)
-  let viewOffsetX = 0;     // Verschiebung in Viewport-Pixeln
+  // Zoom / Pan (nur mit 2 Fingern)
+  let viewScale = 1;
+  let viewOffsetX = 0;
   let viewOffsetY = 0;
-  let fitScale = 1;        // Skala, bei der Bild die Fläche füllt
-  let isPanning = false;
-  let panStart = null;
-  let pointers = new Map(); // Multi-Touch für Pinch
+  let fitScale = 1;
+  let pointers = new Map();
   let lastPinchDist = 0;
+  let lastPinchMid = null;
+  let multiTouchMode = false; // true sobald 2 Finger aktiv waren
 
-  // Fadenkreuz: Versatz nach oben, damit Finger nicht verdeckt
-  const CROSSHAIR_OFFSET_Y = -52; // px nach oben relativ zum Finger
+  const CROSSHAIR_OFFSET_Y = -52;
+  const HANDLE_R = 14;
+  const HIT_TOLERANCE = 22;
+  const SNAP_DIST = 28;
 
   const buttons = {
     undo: $("undo"),
@@ -62,90 +59,113 @@
     load: $("loadProject")
   };
 
-  const HANDLE_R = 14;
-  const HIT_TOLERANCE = 22;
-  const SNAP_DIST = 28;
+  const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  // ---------- Speech ----------
-  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  function initSpeech() {
-    if (!SpeechRecognitionAPI) return;
-    try {
-      recognition = new SpeechRecognitionAPI();
-      recognition.lang = "de-DE";
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-      recognition.continuous = false;
-      recognition.onresult = (event) => {
-        clearSpeechTimeout();
-        const raw = (event.results[0] && event.results[0][0] && event.results[0][0].transcript) || "";
-        const cleaned = raw.replace(/,/g, ".").replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1");
-        if (cleaned) {
-          valueDialogInput.value = cleaned;
-          valueDialogHint.textContent = "Erkannt: " + cleaned;
-        } else {
-          valueDialogHint.textContent = "Keine Zahl – bitte tippen.";
-        }
-        stopListening(false);
-      };
-      recognition.onerror = (event) => {
-        clearSpeechTimeout();
-        const err = event.error || "";
-        if (err === "not-allowed" || err === "service-not-allowed") {
-          valueDialogHint.textContent = "Mikrofon verweigert – tippen.";
-        } else if (err === "no-speech") {
-          valueDialogHint.textContent = "Nichts gehört – nochmal 🎤.";
-        } else if (err !== "aborted") {
-          valueDialogHint.textContent = "Sprache nicht verfügbar – tippen.";
-        }
-        stopListening(false);
-      };
-      recognition.onend = () => {
-        clearSpeechTimeout();
-        if (isListening) stopListening(false);
-      };
-      speechSupported = true;
-    } catch (_) {
-      speechSupported = false;
-    }
-  }
-
-  function clearSpeechTimeout() {
-    if (speechTimeout) { clearTimeout(speechTimeout); speechTimeout = null; }
-  }
-  function stopListening(abort) {
-    clearSpeechTimeout();
-    isListening = false;
-    valueDialogMic.classList.remove("listening");
-    if (recognition) {
-      try { if (abort) recognition.abort(); else recognition.stop(); } catch (_) {}
-    }
-  }
-  function startListening() {
-    if (!speechSupported || !recognition) {
-      valueDialogHint.textContent = "Sprache nicht unterstützt – tippen.";
+  // ---------- Sprache: jedes Mal frische Instanz ----------
+  function speakNumber() {
+    if (!SpeechAPI) {
+      valueDialogHint.textContent = "Sprache wird von diesem Browser nicht unterstützt. Bitte tippen.";
       return;
     }
-    stopListening(true);
-    setTimeout(() => {
-      if (valueDialog.hidden) return;
-      try {
-        isListening = true;
-        valueDialogMic.classList.add("listening");
-        valueDialogHint.textContent = "Hört zu …";
-        recognition.start();
-        speechTimeout = setTimeout(() => {
-          valueDialogHint.textContent = "Zeit abgelaufen – tippen oder 🎤.";
-          stopListening(true);
-        }, 6000);
-      } catch (_) {
-        valueDialogHint.textContent = "Mikrofon nicht startklar – tippen.";
-        stopListening(false);
+    // Laufende Erkennung stoppen
+    try {
+      if (window._fmRec) {
+        window._fmRec.onresult = null;
+        window._fmRec.onerror = null;
+        window._fmRec.onend = null;
+        window._fmRec.abort();
       }
-    }, 150);
+    } catch (_) {}
+
+    let rec;
+    try {
+      rec = new SpeechAPI();
+    } catch (_) {
+      valueDialogHint.textContent = "Sprache nicht startbar – bitte tippen.";
+      return;
+    }
+
+    window._fmRec = rec;
+    rec.lang = "de-DE";
+    rec.interimResults = false;
+    rec.maxAlternatives = 3;
+    rec.continuous = false;
+
+    valueDialogMic.classList.add("listening");
+    valueDialogHint.textContent = "Hört zu … Zahl deutlich sagen.";
+
+    const done = () => {
+      valueDialogMic.classList.remove("listening");
+      try { rec.abort(); } catch (_) {}
+      window._fmRec = null;
+    };
+
+    const timeout = setTimeout(() => {
+      valueDialogHint.textContent = "Zeit abgelaufen – nochmal 🎤 oder tippen.";
+      done();
+    }, 7000);
+
+    rec.onresult = (ev) => {
+      clearTimeout(timeout);
+      let best = "";
+      for (let i = 0; i < ev.results.length; i++) {
+        for (let j = 0; j < ev.results[i].length; j++) {
+          const t = ev.results[i][j].transcript || "";
+          const num = t.replace(/,/g, ".").replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1");
+          if (num && num.length > best.length) best = num;
+        }
+      }
+      if (best) {
+        valueDialogInput.value = best;
+        valueDialogHint.textContent = "Erkannt: " + best;
+      } else {
+        const raw = (ev.results[0] && ev.results[0][0] && ev.results[0][0].transcript) || "";
+        valueDialogHint.textContent = "Gehört: „" + raw + "“ – keine Zahl. Nochmal oder tippen.";
+      }
+      done();
+    };
+
+    rec.onerror = (ev) => {
+      clearTimeout(timeout);
+      const err = ev.error || "";
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        valueDialogHint.textContent = "Mikrofon-Zugriff verweigert. In den Browser-Einstellungen erlauben.";
+      } else if (err === "no-speech") {
+        valueDialogHint.textContent = "Nichts gehört – nochmal 🎤.";
+      } else if (err === "aborted") {
+        // still
+      } else {
+        valueDialogHint.textContent = "Fehler (" + err + ") – bitte tippen.";
+      }
+      done();
+    };
+
+    rec.onend = () => {
+      clearTimeout(timeout);
+      valueDialogMic.classList.remove("listening");
+    };
+
+    try {
+      rec.start();
+    } catch (e) {
+      clearTimeout(timeout);
+      valueDialogHint.textContent = "Konnte nicht starten – kurz warten und nochmal 🎤.";
+      done();
+    }
   }
-  initSpeech();
+
+  function stopSpeech() {
+    try {
+      if (window._fmRec) {
+        window._fmRec.onresult = null;
+        window._fmRec.onerror = null;
+        window._fmRec.onend = null;
+        window._fmRec.abort();
+        window._fmRec = null;
+      }
+    } catch (_) {}
+    valueDialogMic.classList.remove("listening");
+  }
 
   // ---------- History ----------
   function remember() {
@@ -170,19 +190,29 @@
     return Number(fontSizeInput.value) || 18;
   }
 
+  function hideEmptyState() {
+    emptyState.hidden = true;
+    emptyState.classList.add("is-hidden");
+    emptyState.style.display = "none";
+  }
+
+  function showEmptyState() {
+    emptyState.hidden = false;
+    emptyState.classList.remove("is-hidden");
+    emptyState.style.display = "";
+  }
+
   // ---------- Zoom / Fit ----------
   function computeFitScale() {
     if (!photoLoaded) return 1;
     const wrap = canvasWrap.getBoundingClientRect();
     const sx = wrap.width / canvas.width;
     const sy = wrap.height / canvas.height;
-    // Bild füllt die Fläche (cover-ähnlich, aber contain damit nichts abgeschnitten wird beim Fit)
     return Math.min(sx, sy);
   }
 
   function applyViewTransform() {
     if (!photoLoaded) return;
-    // Canvas zentriert + skaliert + verschoben
     const totalScale = fitScale * viewScale;
     canvas.style.width = canvas.width + "px";
     canvas.style.height = canvas.height + "px";
@@ -200,15 +230,13 @@
     applyViewTransform();
   }
 
-  function setZoom(newScale, centerX, centerY) {
-    // centerX/Y relativ zum Viewport (optional, für Pinch-Zentrum)
+  function setZoom(newScale, midClientX, midClientY) {
     const prev = viewScale;
-    viewScale = Math.max(0.5, Math.min(8, newScale));
-    if (centerX != null && centerY != null && prev > 0) {
+    viewScale = Math.max(0.4, Math.min(8, newScale));
+    if (midClientX != null && midClientY != null && prev > 0) {
       const wrap = canvasWrap.getBoundingClientRect();
-      const cx = centerX - wrap.left - wrap.width / 2;
-      const cy = centerY - wrap.top - wrap.height / 2;
-      // Offset so anpassen, dass der Punkt unter dem Finger bleibt
+      const cx = midClientX - wrap.left - wrap.width / 2;
+      const cy = midClientY - wrap.top - wrap.height / 2;
       viewOffsetX = cx - (cx - viewOffsetX) * (viewScale / prev);
       viewOffsetY = cy - (cy - viewOffsetY) * (viewScale / prev);
     }
@@ -218,24 +246,19 @@
   $("zoomIn").addEventListener("click", () => setZoom(viewScale * 1.25));
   $("zoomOut").addEventListener("click", () => setZoom(viewScale / 1.25));
   $("zoomReset").addEventListener("click", () => fitToView());
-
   window.addEventListener("resize", () => {
-    if (photoLoaded) {
-      fitScale = computeFitScale();
-      applyViewTransform();
-    }
+    if (photoLoaded) { fitScale = computeFitScale(); applyViewTransform(); }
   });
 
-  // ---------- Canvas zeichnen ----------
+  // ---------- Canvas ----------
   function resizeCanvas() {
     if (!photoLoaded) return;
-    // Interne Auflösung: Original bis max 2000 px
     const maxSide = 2000;
     const scale = Math.min(1, maxSide / Math.max(photo.naturalWidth, photo.naturalHeight));
     canvas.width = Math.round(photo.naturalWidth * scale);
     canvas.height = Math.round(photo.naturalHeight * scale);
     canvas.style.display = "block";
-    emptyState.hidden = true;
+    hideEmptyState();
     fitToView();
     draw();
   }
@@ -246,7 +269,7 @@
     ctx.drawImage(photo, 0, 0, canvas.width, canvas.height);
     drawings.forEach((d) => drawShape(d));
     measures.forEach((m) => drawMeasure(m));
-    if (activeDrawing && activeDrawing.type !== "move-measure" && activeDrawing.type !== "move-endpoint" && activeDrawing.type !== "pan") {
+    if (activeDrawing && activeDrawing.type !== "move-measure" && activeDrawing.type !== "move-endpoint") {
       if (activeDrawing.type === "measure") drawMeasurePreview(activeDrawing);
       else drawShape(activeDrawing);
     }
@@ -382,15 +405,12 @@
     ctx.restore();
   }
 
-  // ---------- Koordinaten: Screen → Canvas ----------
+  // ---------- Koordinaten ----------
   function pointFromEvent(e) {
-    // Fingerposition → Canvas-Koordinaten unter Berücksichtigung von Zoom/Pan
     const wrap = canvasWrap.getBoundingClientRect();
     const totalScale = fitScale * viewScale;
-    // Mittelpunkt des Viewports
     const cx = wrap.left + wrap.width / 2;
     const cy = wrap.top + wrap.height / 2;
-    // Position relativ zum zentrierten, skalierten Canvas
     const sx = e.clientX - cx - viewOffsetX;
     const sy = e.clientY - cy - viewOffsetY;
     return {
@@ -399,35 +419,24 @@
     };
   }
 
-  /** Fadenkreuz-Position: Finger + Offset nach oben (Viewport-Koordinaten) */
   function updateCrosshair(clientX, clientY) {
-    if (!crosshairToggle.checked || !photoLoaded) {
+    if (!crosshairToggle.checked || !photoLoaded || multiTouchMode) {
       crosshairEl.hidden = true;
       return;
     }
     const wrap = canvasWrap.getBoundingClientRect();
-    const x = clientX - wrap.left;
-    const y = clientY - wrap.top + CROSSHAIR_OFFSET_Y;
     crosshairEl.hidden = false;
-    crosshairEl.style.left = x + "px";
-    crosshairEl.style.top = y + "px";
+    crosshairEl.style.left = (clientX - wrap.left) + "px";
+    crosshairEl.style.top = (clientY - wrap.top + CROSSHAIR_OFFSET_Y) + "px";
   }
 
   function hideCrosshair() {
     crosshairEl.hidden = true;
   }
 
-  /**
-   * Wenn Fadenkreuz aktiv: Zeichenpunkt = Finger + Offset (in Canvas-Koordinaten)
-   */
   function pointWithCrosshair(e) {
     if (!crosshairToggle.checked) return pointFromEvent(e);
-    // Virtuellen Punkt erzeugen, der dem Fadenkreuz entspricht
-    const fake = {
-      clientX: e.clientX,
-      clientY: e.clientY + CROSSHAIR_OFFSET_Y
-    };
-    return pointFromEvent(fake);
+    return pointFromEvent({ clientX: e.clientX, clientY: e.clientY + CROSSHAIR_OFFSET_Y });
   }
 
   function dist(a, b) {
@@ -441,31 +450,23 @@
     return Math.hypot(p.x - (x1 + t * dx), p.y - (y1 + t * dy));
   }
 
-  // ---------- Snap ----------
-  function getSnapCandidates(excludeId) {
-    const pts = [];
-    measures.forEach((m) => {
-      if (excludeId && m.id === excludeId) return;
-      pts.push({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 });
-    });
-    return pts;
-  }
   function findSnap(p, excludeId) {
     if (!snapToggle.checked) return null;
     let best = null, bestDist = SNAP_DIST;
-    for (const c of getSnapCandidates(excludeId)) {
-      const d = Math.hypot(p.x - c.x, p.y - c.y);
-      if (d < bestDist) { bestDist = d; best = c; }
-    }
+    measures.forEach((m) => {
+      if (excludeId && m.id === excludeId) return;
+      [{ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }].forEach((c) => {
+        const d = Math.hypot(p.x - c.x, p.y - c.y);
+        if (d < bestDist) { bestDist = d; best = c; }
+      });
+    });
     return best;
   }
 
-  // ---------- Hit ----------
   function hitMeasure(p) {
     if (selectedId !== null) {
       const m = measures.find((x) => x.id === selectedId);
       if (m) {
-        // Handles skalieren optisch mit Zoom – Toleranz etwas anpassen
         const tol = HANDLE_R + 8;
         if (dist(p, { x: m.x1, y: m.y1 }) < tol) return { measure: m, endpoint: 1 };
         if (dist(p, { x: m.x2, y: m.y2 }) < tol) return { measure: m, endpoint: 2 };
@@ -649,7 +650,7 @@
     if (!photoLoaded) return;
     try {
       const payload = {
-        version: 5,
+        version: 6,
         projectName: $("projectName").value,
         photoData, measures, drawings, nextId,
         unit: unitSelect.value,
@@ -762,19 +763,21 @@
   });
 
   function openValueDialog(measureId, startMic) {
-    stopListening(true);
+    stopSpeech();
     editingMeasureId = measureId;
     const m = measures.find((x) => x.id === measureId);
     valueDialogInput.value = m ? (m.value || "") : "";
-    valueDialogHint.textContent = speechSupported ? "Zahl tippen oder 🎤" : "Bitte tippen.";
+    valueDialogHint.textContent = SpeechAPI
+      ? "Zahl tippen oder 🎤 antippen"
+      : "Sprache nicht verfügbar – bitte tippen.";
     valueDialog.hidden = false;
     setTimeout(() => {
       valueDialogInput.focus();
-      if (startMic && speechSupported) startListening();
-    }, 100);
+      if (startMic) speakNumber();
+    }, 120);
   }
   function closeValueDialog() {
-    stopListening(true);
+    stopSpeech();
     valueDialog.hidden = true;
     editingMeasureId = null;
   }
@@ -792,45 +795,48 @@
     closeValueDialog();
   });
   valueDialogMic.addEventListener("click", () => {
-    if (isListening) {
-      stopListening(true);
-      valueDialogHint.textContent = "Gestoppt – tippen oder 🎤.";
-    } else startListening();
+    if (valueDialogMic.classList.contains("listening")) {
+      stopSpeech();
+      valueDialogHint.textContent = "Gestoppt – tippen oder nochmal 🎤.";
+    } else {
+      speakNumber();
+    }
   });
   valueDialogInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("valueDialogOk").click();
     if (e.key === "Escape") closeValueDialog();
   });
 
-  // ---------- Pointer / Touch (inkl. Pinch-Zoom) ----------
+  // ---------- Pointer: 1 Finger = Werkzeug, 2 Finger = Zoom + Schieben ----------
   function onPointerDown(e) {
     if (!photoLoaded) return;
     e.preventDefault();
     canvasWrap.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    // Zwei Finger → Pinch vorbereiten
-    if (pointers.size === 2) {
-      const pts = [...pointers.values()];
-      lastPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    // Zweiter Finger → Multi-Touch: laufende Zeichnung abbrechen
+    if (pointers.size >= 2) {
+      multiTouchMode = true;
       activeDrawing = null;
       pointerStart = null;
+      snapPoint = null;
       hideCrosshair();
+      const pts = [...pointers.values()];
+      lastPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      lastPinchMid = {
+        x: (pts[0].x + pts[1].x) / 2,
+        y: (pts[0].y + pts[1].y) / 2
+      };
+      draw();
       return;
     }
 
+    // Ein Finger = Werkzeug
+    multiTouchMode = false;
     updateCrosshair(e.clientX, e.clientY);
     let p = pointWithCrosshair(e);
     pointerStart = p;
     snapPoint = null;
-
-    // Pan-Werkzeug oder mittlerer/rechter Klick
-    if (tool === "pan") {
-      isPanning = true;
-      panStart = { x: e.clientX, y: e.clientY, ox: viewOffsetX, oy: viewOffsetY };
-      activeDrawing = { type: "pan" };
-      return;
-    }
 
     if (tool === "select") {
       const hit = hitMeasure(p);
@@ -849,12 +855,6 @@
         }
       } else {
         selectedId = null;
-        // Tippen ins Leere bei Zoom > 1 → Schieben erlauben
-        if (viewScale > 1.05) {
-          isPanning = true;
-          panStart = { x: e.clientX, y: e.clientY, ox: viewOffsetX, oy: viewOffsetY };
-          activeDrawing = { type: "pan" };
-        }
       }
       renderMeasureList();
       draw();
@@ -905,34 +905,40 @@
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
 
-    // Pinch-Zoom
-    if (pointers.size === 2) {
-      const pts = [...pointers.values()];
-      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      if (lastPinchDist > 0) {
-        const factor = dist / lastPinchDist;
-        const midX = (pts[0].x + pts[1].x) / 2;
-        const midY = (pts[0].y + pts[1].y) / 2;
-        setZoom(viewScale * factor, midX, midY);
-      }
-      lastPinchDist = dist;
+    // --- Zwei Finger: Zoom + Pan ---
+    if (pointers.size >= 2) {
+      multiTouchMode = true;
       hideCrosshair();
+      const pts = [...pointers.values()];
+      const distNow = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const mid = {
+        x: (pts[0].x + pts[1].x) / 2,
+        y: (pts[0].y + pts[1].y) / 2
+      };
+
+      if (lastPinchDist > 0) {
+        const factor = distNow / lastPinchDist;
+        // Zoom um die Mitte der beiden Finger
+        setZoom(viewScale * factor, mid.x, mid.y);
+      }
+      if (lastPinchMid) {
+        // Pan = Verschiebung der Fingermitte
+        viewOffsetX += mid.x - lastPinchMid.x;
+        viewOffsetY += mid.y - lastPinchMid.y;
+        applyViewTransform();
+      }
+
+      lastPinchDist = distNow;
+      lastPinchMid = mid;
       return;
     }
+
+    // --- Ein Finger: Werkzeug ---
+    if (multiTouchMode) return; // nach Multi-Touch erst loslassen
 
     updateCrosshair(e.clientX, e.clientY);
+    if (!pointerStart || !activeDrawing) return;
 
-    if (!pointerStart && !isPanning) return;
-
-    // Pan
-    if (isPanning && panStart) {
-      viewOffsetX = panStart.ox + (e.clientX - panStart.x);
-      viewOffsetY = panStart.oy + (e.clientY - panStart.y);
-      applyViewTransform();
-      return;
-    }
-
-    if (!activeDrawing) return;
     let p = pointWithCrosshair(e);
 
     if (activeDrawing.type === "move-measure") {
@@ -961,8 +967,6 @@
       return;
     }
 
-    if (activeDrawing.type === "pan") return;
-
     if (activeDrawing.type === "measure") {
       const sn = findSnap(p);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
@@ -977,16 +981,24 @@
 
   function onPointerUp(e) {
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) lastPinchDist = 0;
-    if (pointers.size === 0) hideCrosshair();
 
-    if (isPanning) {
-      isPanning = false;
-      panStart = null;
-      activeDrawing = null;
-      pointerStart = null;
-      return;
+    if (pointers.size < 2) {
+      lastPinchDist = 0;
+      lastPinchMid = null;
     }
+    if (pointers.size === 0) {
+      hideCrosshair();
+      // Multi-Touch beendet – keine Werkzeug-Aktion aus dem Rest-Finger
+      if (multiTouchMode) {
+        multiTouchMode = false;
+        activeDrawing = null;
+        pointerStart = null;
+        snapPoint = null;
+        return;
+      }
+    }
+
+    if (multiTouchMode || pointers.size > 0) return;
 
     if (!activeDrawing) {
       pointerStart = null;
@@ -1004,7 +1016,7 @@
       return;
     }
 
-    if (activeDrawing.type === "move-endpoint" || activeDrawing.type === "pan") {
+    if (activeDrawing.type === "move-endpoint") {
       activeDrawing = null;
       pointerStart = null;
       snapPoint = null;
@@ -1034,7 +1046,7 @@
       });
       selectedId = activeDrawing.id;
       openValueDialog(activeDrawing.id, false);
-    } else if (activeDrawing.type !== "pan") {
+    } else {
       drawings.push(activeDrawing);
     }
 
@@ -1049,7 +1061,9 @@
   canvasWrap.addEventListener("pointermove", onPointerMove);
   canvasWrap.addEventListener("pointerup", onPointerUp);
   canvasWrap.addEventListener("pointercancel", onPointerUp);
-  canvasWrap.addEventListener("pointerleave", () => hideCrosshair());
+  canvasWrap.addEventListener("pointerleave", (e) => {
+    if (pointers.size === 0) hideCrosshair();
+  });
 
   $("projectName").addEventListener("input", () => {
     if (photoLoaded) buttons.save.disabled = false;

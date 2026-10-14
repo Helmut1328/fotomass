@@ -13,16 +13,11 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1>FotoMaß</h1>
-    </div>
-    <div class="topbar-actions">
-      <button id="styleToggle" class="secondary compact" type="button">Baustellenstil</button>
-    </div>
+    <div><h1>FotoMaß</h1></div>
+    <button id="styleToggle" class="secondary compact" type="button">Baustellenstil</button>
   </header>
 
   <main>
-    <!-- Foto wählen -->
     <section class="panel compact-panel">
       <div class="button-row photo-buttons">
         <label class="file-button">
@@ -37,18 +32,16 @@
       <p id="photoStatus" class="status-inline">Noch kein Foto</p>
     </section>
 
-    <!-- Zeichenfläche (groß) -->
     <section class="panel editor-panel">
       <div id="canvasWrap" class="canvas-wrap">
-        <div id="emptyState">
+        <div id="emptyState" class="empty-state">
           <span>📐</span>
-          <strong>Foto wählen</strong>
-          <small>Kamera oder Galerie</small>
+          <strong>Foto laden</strong>
+          <small>Oben Kamera oder Galerie tippen</small>
         </div>
         <div id="viewport" class="viewport">
           <canvas id="editorCanvas" aria-label="Foto mit Maßlinien"></canvas>
         </div>
-        <!-- Fadenkreuz-Overlay (CSS, folgt dem Finger versetzt) -->
         <div id="crosshair" class="crosshair" hidden>
           <div class="ch-h"></div>
           <div class="ch-v"></div>
@@ -56,19 +49,18 @@
         </div>
       </div>
 
-      <!-- Zoom + Fadenkreuz-Leiste -->
       <div class="zoom-bar">
-        <button id="zoomOut" class="secondary compact" type="button" title="Verkleinern">−</button>
+        <button id="zoomOut" class="secondary compact" type="button">−</button>
         <span id="zoomLabel" class="zoom-label">100 %</span>
-        <button id="zoomIn" class="secondary compact" type="button" title="Vergrößern">+</button>
-        <button id="zoomReset" class="secondary compact" type="button" title="Anpassen">Fit</button>
+        <button id="zoomIn" class="secondary compact" type="button">+</button>
+        <button id="zoomReset" class="secondary compact" type="button">Fit</button>
         <label class="crosshair-toggle">
           <input id="crosshairToggle" type="checkbox">
           Fadenkreuz
         </label>
       </div>
+      <p class="hint touch-hint">1 Finger = zeichnen · 2 Finger = zoomen &amp; schieben</p>
 
-      <!-- Werkzeuge -->
       <div class="toolbox">
         <div class="tool-grid">
           <button class="tool active" data-tool="select" type="button">↖ Auswählen</button>
@@ -78,7 +70,6 @@
           <button class="tool" data-tool="rect" type="button">□ Rect</button>
           <button class="tool" data-tool="text" type="button">T Text</button>
           <button class="tool" data-tool="eraser" type="button">⌫ Lösch</button>
-          <button class="tool" data-tool="pan" type="button">✋ Schieben</button>
         </div>
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
@@ -105,7 +96,6 @@
       </div>
     </section>
 
-    <!-- Maße -->
     <section class="panel">
       <div class="section-heading">
         <h2>Maße</h2>
@@ -116,7 +106,6 @@
       </div>
     </section>
 
-    <!-- Projekt -->
     <section class="panel compact-panel">
       <label class="field-label" for="projectName">Projekt</label>
       <input id="projectName" class="text-input" type="text" placeholder="Name …" autocomplete="off">
@@ -145,10 +134,10 @@
     <div class="dialog-box">
       <label for="valueDialogInput">Maßwert</label>
       <div class="value-row">
-        <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234">
+        <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234" autocomplete="off">
         <button id="valueDialogMic" class="mic-btn" type="button" title="Sprache">🎤</button>
       </div>
-      <p id="valueDialogHint" class="hint">Zahl tippen oder 🎤</p>
+      <p id="valueDialogHint" class="hint">Zahl tippen oder 🎤 antippen</p>
       <div class="dialog-actions">
         <button id="valueDialogCancel" class="secondary" type="button">Abbrechen</button>
         <button id="valueDialogOk" type="button">Übernehmen</button>
