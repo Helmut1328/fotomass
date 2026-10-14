@@ -2,76 +2,119 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
   <meta name="theme-color" content="#17212b">
   <meta name="description" content="FotoMaß – Fotos aufnehmen, Maße eintragen und Skizzen ergänzen.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
   <title>FotoMaß</title>
 </head>
 <body>
   <header class="topbar">
-    <div><h1>FotoMaß</h1><p>Fotoaufmaß für Werkstatt & Zuhause</p></div>
-    <button id="styleToggle" class="secondary" type="button">Baustellenstil</button>
+    <div>
+      <h1>FotoMaß</h1>
+      <p>Fotoaufmaß für Werkstatt &amp; Baustelle</p>
+    </div>
+    <button id="styleToggle" class="secondary" type="button" title="Darstellung umschalten">Baustellenstil</button>
   </header>
 
   <main>
+    <!-- Foto & Steuerung -->
     <section class="panel controls">
-      <label class="file-button">📷 Foto aufnehmen / auswählen
+      <label class="file-button">
+        📷 Foto aufnehmen / auswählen
         <input id="photoInput" type="file" accept="image/*" capture="environment">
       </label>
       <div class="button-row">
-        <button id="addMeasure" type="button" disabled>＋ Maßlinie</button>
         <button id="undo" class="secondary" type="button" disabled>↶ Rückgängig</button>
-      </div>
-      <div class="button-row">
         <button id="exportImage" class="secondary" type="button" disabled>Bild exportieren</button>
         <button id="clearAll" class="danger" type="button" disabled>Alles löschen</button>
       </div>
-      <p class="hint">Tipp: Maßlinie antippen, um sie auszuwählen. Ausgewählte Linien lassen sich mit dem Finger verschieben. Über „Zeichenwerkzeuge“ kannst du ergänzen.</p>
+      <p class="hint">Tipp: Maßlinie-Werkzeug wählen und auf dem Foto ziehen. Ausgewählte Maßlinien haben Greifpunkte an den Enden.</p>
     </section>
 
+    <!-- Canvas -->
     <section class="panel editor-panel">
       <div class="section-heading">
-        <h2>Foto & Zeichnung</h2>
+        <h2>Foto &amp; Zeichnung</h2>
         <span id="photoStatus" class="status">Noch kein Foto</span>
       </div>
       <div id="canvasWrap" class="canvas-wrap">
-        <div id="emptyState"><span>📐</span><strong>Hier erscheint dein Foto</strong><small>Foto aufnehmen oder aus der Mediathek wählen</small></div>
+        <div id="emptyState">
+          <span>📐</span>
+          <strong>Hier erscheint dein Foto</strong>
+          <small>Foto aufnehmen oder aus der Mediathek wählen</small>
+        </div>
         <canvas id="editorCanvas" aria-label="Foto mit Maßlinien und Zeichnungen"></canvas>
       </div>
+
+      <!-- Werkzeugleiste -->
       <div class="toolbox">
-        <h3>Zeichenwerkzeuge</h3>
+        <h3>Werkzeuge</h3>
         <div class="tool-grid">
-          <button class="tool active" data-tool="select" type="button">↖ Auswählen</button>
-          <button class="tool" data-tool="freehand" type="button">✎ Freihand</button>
-          <button class="tool" data-tool="line" type="button">／ Linie</button>
-          <button class="tool" data-tool="rect" type="button">□ Rechteck</button>
-          <button class="tool" data-tool="text" type="button">T Text</button>
-          <button class="tool" data-tool="eraser" type="button">⌫ Löschen</button>
+          <button class="tool active" data-tool="select" type="button" title="Auswählen und verschieben">↖ Auswählen</button>
+          <button class="tool" data-tool="measure" type="button" title="Maßlinie ziehen">＋ Maßlinie</button>
+          <button class="tool" data-tool="freehand" type="button" title="Freihand zeichnen">✎ Freihand</button>
+          <button class="tool" data-tool="line" type="button" title="Gerade Linie">／ Linie</button>
+          <button class="tool" data-tool="rect" type="button" title="Rechteck">□ Rechteck</button>
+          <button class="tool" data-tool="text" type="button" title="Text platzieren">T Text</button>
+          <button class="tool" data-tool="eraser" type="button" title="Element tippen zum Löschen">⌫ Löschen</button>
         </div>
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
-          <label>Linienstärke <input id="widthInput" type="range" min="2" max="12" value="4"></label>
+          <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
+          <label>Einheit
+            <select id="unitSelect">
+              <option value=" mm">mm</option>
+              <option value=" cm">cm</option>
+              <option value=" m">m</option>
+            </select>
+          </label>
         </div>
-        <p class="hint">Freihand, Linie und Rechteck: auf dem Foto ziehen. Text: auf das Foto tippen. Löschen: ein Element antippen.</p>
+        <p class="hint">Maßlinie: ziehen. Andere Formen: ziehen. Text: tippen. Löschen: Element antippen. Ausgewählte Maßlinie: Endpunkte greifen und verschieben.</p>
       </div>
     </section>
 
+    <!-- Maße -->
     <section class="panel">
-      <div class="section-heading"><h2>Maße</h2><span class="hint">Werte manuell eintragen</span></div>
-      <div id="measureList" class="measure-list"><p class="empty-list">Noch keine Maßlinien angelegt.</p></div>
+      <div class="section-heading">
+        <h2>Maße</h2>
+        <span class="hint">Werte manuell eintragen</span>
+      </div>
+      <div id="measureList" class="measure-list">
+        <p class="empty-list">Noch keine Maßlinien angelegt.</p>
+      </div>
     </section>
+
+    <!-- Projekt -->
     <section class="panel">
       <h2>Projekt</h2>
       <label class="field-label" for="projectName">Projektname</label>
-      <input id="projectName" class="text-input" type="text" placeholder="z. B. Einbauschrank Flur">
-      <button id="saveProject" class="secondary full-width" type="button" disabled>Auf diesem Gerät speichern</button>
-      <p id="saveStatus" class="hint">Die Daten bleiben lokal in diesem Browser. Exportiere wichtige Ergebnisse zusätzlich als Bild.</p>
+      <input id="projectName" class="text-input" type="text" placeholder="z. B. Einbauschrank Flur" autocomplete="off">
+      <div class="button-row" style="margin-top:10px">
+        <button id="saveProject" class="secondary" type="button" disabled>Speichern</button>
+        <button id="loadProject" class="secondary" type="button">Laden</button>
+      </div>
+      <p id="saveStatus" class="hint">Daten bleiben lokal in diesem Browser. Wichtige Ergebnisse zusätzlich als PNG exportieren.</p>
     </section>
   </main>
 
-  <footer>FotoMaß · MVP · Maße bitte vor Fertigung vor Ort prüfen.</footer>
+  <footer>FotoMaß · Maße bitte vor Fertigung vor Ort prüfen.</footer>
+
+  <!-- Einfacher Text-Dialog (statt prompt) -->
+  <div id="textDialog" class="dialog" hidden>
+    <div class="dialog-box">
+      <label for="textDialogInput">Beschriftung</label>
+      <input id="textDialogInput" type="text" maxlength="80" placeholder="z. B. Korpus neu">
+      <div class="dialog-actions">
+        <button id="textDialogCancel" class="secondary" type="button">Abbrechen</button>
+        <button id="textDialogOk" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,9 +1,10 @@
 {
   "name": "FotoMaß",
   "short_name": "FotoMaß",
-  "description": "Fotoaufmaß für Schreinerarbeiten und private Projekte",
+  "description": "Fotoaufmaß für Schreinerarbeiten, Möbelbau und Baustelle",
   "start_url": "./",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#f2f4f6",
   "theme_color": "#17212b",
   "icons": []

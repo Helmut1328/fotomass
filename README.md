@@ -1,34 +1,64 @@
-# FotoMaß – Smartphone-MVP
+# FotoMaß – Smartphone-Aufmaß
 
-Ein kleines, statisches HTML/CSS/JavaScript-Projekt für GitHub Pages.
+Statische HTML/CSS/JavaScript-Web-App für GitHub Pages.  
+Foto aufnehmen, Maße einzeichnen, Skizzen ergänzen und als PNG exportieren.
 
-## Funktionen im MVP
-- Foto aufnehmen oder aus der Mediathek auswählen
-- Manuelle Maßlinien anlegen und Werte eintragen
-- Maßlinien auswählen und verschieben
-- Farbe wählen
-- Freihand, Linie, Rechteck und Text ergänzen
-- Zeichenobjekte per Radierer entfernen
-- Technischer Standardstil und optionaler Baustellenstil
+## Funktionen
+
+- Foto aufnehmen oder aus der Mediathek wählen
+- **Maßlinien per Ziehen** auf dem Foto anlegen
+- Maßwerte manuell eintragen (mm / cm / m)
+- Maßlinien auswählen, als Ganzes verschieben **oder Endpunkte einzeln greifen**
+- Farbe und Einheit pro Maßlinie
+- Freihand, Gerade, Rechteck und Text
+- Zuverlässiges Löschen von Maßen und Zeichnungen (Radierer)
+- Rückgängig (Undo)
+- Technischer Stil und kräftiger Baustellenstil
 - Annotiertes Bild als PNG exportieren
-- Einfaches lokales Speichern im Browser
+- Projekt lokal im Browser speichern und wieder laden
+
+## Bedienung (kurz)
+
+1. Foto aufnehmen oder auswählen.
+2. Werkzeug **＋ Maßlinie** wählen und auf dem Foto von A nach B ziehen.
+3. In der Maßliste den Wert eintippen.
+4. Mit **↖ Auswählen** eine Maßlinie antippen → Endpunkte erscheinen und lassen sich verschieben.
+5. Weitere Skizzen mit Freihand, Linie, Rechteck oder Text ergänzen.
+6. Fertiges Bild exportieren und/oder Projekt speichern.
 
 ## Veröffentlichung mit GitHub Pages
-1. Melde dich bei https://github.com an.
-2. Klicke oben rechts auf `+` und dann `New repository`.
-3. Repository name: `fotomass`
-4. Sichtbarkeit: `Public` (für die einfachste GitHub-Pages-Veröffentlichung).
-5. `Add a README file` kannst du abwählen, weil diese ZIP bereits eine README enthält.
-6. Klicke auf `Create repository`.
-7. Im neuen Repository `Add file` → `Upload files` wählen.
-8. Entpacke die ZIP auf deinem Computer und lade **die sechs Dateien aus dem Ordner** hoch. Wichtig: `index.html` muss direkt im Hauptordner des Repositorys liegen, nicht in einem Unterordner und nicht als ZIP.
-9. Klicke auf `Commit changes`.
-10. Öffne `Settings` → `Pages`.
-11. Bei `Build and deployment` als Quelle `Deploy from a branch` wählen.
-12. Branch `main` und Ordner `/(root)` wählen, dann `Save`.
-13. Warte kurz und öffne die angezeigte URL. Sie sieht ungefähr so aus: `https://DEIN-BENUTZERNAME.github.io/fotomass/`.
+
+1. Bei https://github.com anmelden.
+2. Oben rechts `+` → `New repository`.
+3. Name z. B. `fotomass`, Sichtbarkeit **Public**.
+4. Repository anlegen.
+5. `Add file` → `Upload files`.
+6. Die Dateien aus diesem Ordner hochladen:
+   - `index.html`
+   - `style.css`
+   - `app.js`
+   - `manifest.json`
+   - `service-worker.js`
+   - `README.md`
+   
+   Wichtig: `index.html` muss **direkt im Hauptverzeichnis** des Repositories liegen.
+7. `Commit changes`.
+8. `Settings` → `Pages`.
+9. Quelle: **Deploy from a branch**, Branch `main`, Ordner `/(root)` → `Save`.
+10. Nach kurzer Wartezeit erscheint die URL, z. B.  
+    `https://DEIN-BENUTZERNAME.github.io/fotomass/`
 
 ## Hinweise
-- GitHub Pages veröffentlicht die Dateien öffentlich. Lade keine privaten Fotos oder persönlichen Daten ins Repository.
-- Fotos, die du in FotoMaß auswählst, werden in diesem MVP nicht an einen Server übertragen. Lokales Speichern ist browserabhängig; wichtige Ergebnisse daher zusätzlich als PNG exportieren.
-- Die App ist ein MVP. Automatische Maßberechnung, Projektverwaltung mit mehreren Projekten und robustes Backup sind noch nicht enthalten.
+
+- GitHub Pages ist öffentlich. Keine privaten Fotos ins Repository laden.
+- Fotos und Projekt-Daten bleiben im Browser (localStorage). Sie werden nicht auf einen Server übertragen.
+- Große Fotos können den localStorage-Quota überschreiten → wichtige Ergebnisse immer zusätzlich als PNG exportieren.
+- Die App ist ein MVP. Automatische Maßberechnung aus dem Foto ist bewusst **nicht** enthalten (ohne Kalibrierung und Perspektivkorrektur wäre sie unzuverlässig).
+
+## Nächste sinnvolle Schritte
+
+- Mehrere Projekte verwalten
+- PDF-Projektblatt (Foto + Maßliste + Notizen)
+- Einfaches Zoom/Pan auf dem Canvas
+- Maßketten und Hilfslinien
+- PWA-Icons und Service Worker für Offline-Nutzung
