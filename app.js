@@ -35,6 +35,8 @@
   let pendingTextPoint = null;
   let editingMeasureId = null;
   let snapPoint = null;
+  let lastTapTime = 0;
+  let lastTapMeasureId = null;
 
   // Zoom / Pan (nur mit 2 Fingern)
   let viewScale = 1;
@@ -47,8 +49,8 @@
   let multiTouchMode = false; // true sobald 2 Finger aktiv waren
 
   const CROSSHAIR_OFFSET_Y = -52;
-  const HANDLE_R = 14;
-  const HIT_TOLERANCE = 22;
+  const HANDLE_R = 22;
+  const HIT_TOLERANCE = 26;
   const SNAP_DIST = 28;
 
   const buttons = {
@@ -61,19 +63,73 @@
 
   const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  // ---------- Sprache: jedes Mal frische Instanz ----------
+  // ---------- Sprache ----------
+  const DE_NUM = {
+    null: 0, nullen: 0, eins: 1, ein: 1, eine: 1, zwei: 2, drei: 3, vier: 4, fünf: 5, funf: 5,
+    sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwölf: 12, zwolf: 12,
+    dreizehn: 13, vierzehn: 14, fünfzehn: 15, funfzehn: 15, sechzehn: 16, siebzehn: 17,
+    achtzehn: 18, neunzehn: 19, zwanzig: 20, dreißig: 30, dreissig: 30, vierzig: 40,
+    fünfzig: 50, funfzig: 50, sechzig: 60, siebzig: 70, achtzig: 80, neunzig: 90,
+    hundert: 100, tausend: 1000
+  };
+
+  function parseSpokenNumber(raw) {
+    if (!raw) return "";
+    // Ziffern direkt
+    const digits = raw.replace(/,/g, ".").replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1");
+    if (digits && /\d/.test(digits)) return digits;
+
+    // Einfache deutsche Zahlwörter
+    const tokens = raw.toLowerCase()
+      .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+      .replace(/[^a-z\s-]/g, " ")
+      .split(/[\s-]+/)
+      .filter(Boolean);
+
+    let total = 0;
+    let current = 0;
+    let found = false;
+    for (const t of tokens) {
+      const key = t.replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü");
+      // normalize back for lookup without umlauts too
+      const v = DE_NUM[t] !== undefined ? DE_NUM[t]
+        : (DE_NUM[key] !== undefined ? DE_NUM[key] : undefined);
+      if (v === undefined) continue;
+      found = true;
+      if (v === 1000) {
+        current = (current || 1) * 1000;
+        total += current;
+        current = 0;
+      } else if (v === 100) {
+        current = (current || 1) * 100;
+      } else if (v >= 20) {
+        current += v;
+      } else {
+        current += v;
+      }
+    }
+    total += current;
+    return found ? String(total) : "";
+  }
+
   function speakNumber() {
     if (!SpeechAPI) {
-      valueDialogHint.textContent = "Sprache wird von diesem Browser nicht unterstützt. Bitte tippen.";
+      valueDialogHint.textContent = "Sprache wird hier nicht unterstützt (Chrome/Android empfohlen). Bitte tippen.";
       return;
     }
-    // Laufende Erkennung stoppen
+    // Nur bei HTTPS oder localhost
+    if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+      valueDialogHint.textContent = "Sprache braucht HTTPS (z. B. GitHub Pages). Bitte tippen.";
+      return;
+    }
+
     try {
       if (window._fmRec) {
         window._fmRec.onresult = null;
         window._fmRec.onerror = null;
         window._fmRec.onend = null;
-        window._fmRec.abort();
+        try { window._fmRec.abort(); } catch (_) {}
+        window._fmRec = null;
       }
     } catch (_) {}
 
@@ -87,70 +143,90 @@
 
     window._fmRec = rec;
     rec.lang = "de-DE";
-    rec.interimResults = false;
-    rec.maxAlternatives = 3;
+    rec.interimResults = true;
+    rec.maxAlternatives = 5;
     rec.continuous = false;
 
     valueDialogMic.classList.add("listening");
-    valueDialogHint.textContent = "Hört zu … Zahl deutlich sagen.";
+    valueDialogHint.textContent = "Hört zu … Zahl sagen (z. B. „1234“ oder „zwölfhundert“).";
 
-    const done = () => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       valueDialogMic.classList.remove("listening");
+      try { rec.stop(); } catch (_) {}
       try { rec.abort(); } catch (_) {}
       window._fmRec = null;
     };
 
     const timeout = setTimeout(() => {
       valueDialogHint.textContent = "Zeit abgelaufen – nochmal 🎤 oder tippen.";
-      done();
-    }, 7000);
+      finish();
+    }, 8000);
 
     rec.onresult = (ev) => {
-      clearTimeout(timeout);
       let best = "";
+      let rawBest = "";
       for (let i = 0; i < ev.results.length; i++) {
         for (let j = 0; j < ev.results[i].length; j++) {
           const t = ev.results[i][j].transcript || "";
-          const num = t.replace(/,/g, ".").replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1");
-          if (num && num.length > best.length) best = num;
+          const num = parseSpokenNumber(t);
+          if (num && num.length >= best.length) {
+            best = num;
+            rawBest = t;
+          }
+          if (!rawBest) rawBest = t;
+        }
+        // finales Ergebnis
+        if (ev.results[i].isFinal && best) {
+          clearTimeout(timeout);
+          valueDialogInput.value = best;
+          valueDialogHint.textContent = "Erkannt: " + best;
+          finish();
+          return;
         }
       }
       if (best) {
         valueDialogInput.value = best;
-        valueDialogHint.textContent = "Erkannt: " + best;
-      } else {
-        const raw = (ev.results[0] && ev.results[0][0] && ev.results[0][0].transcript) || "";
-        valueDialogHint.textContent = "Gehört: „" + raw + "“ – keine Zahl. Nochmal oder tippen.";
+        valueDialogHint.textContent = "… " + best;
+      } else if (rawBest) {
+        valueDialogHint.textContent = "… „" + rawBest + "“";
       }
-      done();
     };
 
     rec.onerror = (ev) => {
       clearTimeout(timeout);
       const err = ev.error || "";
       if (err === "not-allowed" || err === "service-not-allowed") {
-        valueDialogHint.textContent = "Mikrofon-Zugriff verweigert. In den Browser-Einstellungen erlauben.";
+        valueDialogHint.textContent = "Mikrofon verweigert – in Browser-Einstellungen erlauben.";
       } else if (err === "no-speech") {
         valueDialogHint.textContent = "Nichts gehört – nochmal 🎤.";
-      } else if (err === "aborted") {
-        // still
-      } else {
-        valueDialogHint.textContent = "Fehler (" + err + ") – bitte tippen.";
+      } else if (err === "network") {
+        valueDialogHint.textContent = "Netzwerkfehler bei Sprache – bitte tippen.";
+      } else if (err !== "aborted") {
+        valueDialogHint.textContent = "Sprache-Fehler (" + err + ") – bitte tippen.";
       }
-      done();
+      finish();
     };
 
     rec.onend = () => {
       clearTimeout(timeout);
-      valueDialogMic.classList.remove("listening");
+      if (!finished) {
+        if (!valueDialogInput.value) {
+          valueDialogHint.textContent = "Keine Zahl erkannt – nochmal 🎤 oder tippen.";
+        }
+        finish();
+      }
     };
 
+    // Direkt im User-Gesture-Kontext starten
     try {
       rec.start();
     } catch (e) {
       clearTimeout(timeout);
-      valueDialogHint.textContent = "Konnte nicht starten – kurz warten und nochmal 🎤.";
-      done();
+      valueDialogHint.textContent = "Start fehlgeschlagen – 1 Sek. warten, nochmal 🎤.";
+      finish();
     }
   }
 
@@ -160,7 +236,7 @@
         window._fmRec.onresult = null;
         window._fmRec.onerror = null;
         window._fmRec.onend = null;
-        window._fmRec.abort();
+        try { window._fmRec.abort(); } catch (_) {}
         window._fmRec = null;
       }
     } catch (_) {}
@@ -365,12 +441,21 @@
   }
 
   function drawHandle(x, y) {
+    // Äußerer Ring (leicht zu treffen)
     ctx.beginPath();
     ctx.arc(x, y, HANDLE_R, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(22, 130, 213, 0.25)";
+    ctx.fill();
+    ctx.strokeStyle = "#1682d5";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    // Innerer Punkt
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
     ctx.fillStyle = "#fff";
     ctx.fill();
     ctx.strokeStyle = "#1682d5";
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
 
@@ -464,14 +549,14 @@
   }
 
   function hitMeasure(p) {
-    if (selectedId !== null) {
-      const m = measures.find((x) => x.id === selectedId);
-      if (m) {
-        const tol = HANDLE_R + 8;
-        if (dist(p, { x: m.x1, y: m.y1 }) < tol) return { measure: m, endpoint: 1 };
-        if (dist(p, { x: m.x2, y: m.y2 }) < tol) return { measure: m, endpoint: 2 };
-      }
+    const tol = HANDLE_R + 14;
+    // Zuerst ALLE Endpunkte (leichter greifbar)
+    for (let i = measures.length - 1; i >= 0; i--) {
+      const m = measures[i];
+      if (dist(p, { x: m.x1, y: m.y1 }) < tol) return { measure: m, endpoint: 1 };
+      if (dist(p, { x: m.x2, y: m.y2 }) < tol) return { measure: m, endpoint: 2 };
     }
+    // Dann Liniensegmente
     for (let i = measures.length - 1; i >= 0; i--) {
       const m = measures[i];
       if (distanceToSegment(p, m.x1, m.y1, m.x2, m.y2) < HIT_TOLERANCE) {
@@ -771,10 +856,13 @@
       ? "Zahl tippen oder 🎤 antippen"
       : "Sprache nicht verfügbar – bitte tippen.";
     valueDialog.hidden = false;
+    // Sprache SOFORT starten (User-Gesture darf nicht durch setTimeout unterbrochen werden)
+    if (startMic) {
+      speakNumber();
+    }
     setTimeout(() => {
-      valueDialogInput.focus();
-      if (startMic) speakNumber();
-    }, 120);
+      try { valueDialogInput.focus(); } catch (_) {}
+    }, 80);
   }
   function closeValueDialog() {
     stopSpeech();
@@ -1007,7 +1095,18 @@
     }
 
     if (activeDrawing.type === "move-measure") {
-      if (!activeDrawing.moved) openValueDialog(activeDrawing.id, false);
+      // Nur Doppel-Tipp öffnet den Wert-Dialog
+      if (!activeDrawing.moved) {
+        const now = Date.now();
+        if (lastTapMeasureId === activeDrawing.id && (now - lastTapTime) < 450) {
+          openValueDialog(activeDrawing.id, false);
+          lastTapTime = 0;
+          lastTapMeasureId = null;
+        } else {
+          lastTapTime = now;
+          lastTapMeasureId = activeDrawing.id;
+        }
+      }
       activeDrawing = null;
       pointerStart = null;
       snapPoint = null;
@@ -1045,7 +1144,7 @@
         color: activeDrawing.color
       });
       selectedId = activeDrawing.id;
-      openValueDialog(activeDrawing.id, false);
+      // Wert nur per Doppel-Tipp oder über die Maßliste
     } else {
       drawings.push(activeDrawing);
     }
