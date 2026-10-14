@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#17212b">
+  <meta name="description" content="FotoMaß – Fotos aufnehmen, Maße eintragen und Skizzen ergänzen.">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+  <title>FotoMaß</title>
+</head>
+<body>
+  <header class="topbar">
+    <div><h1>FotoMaß</h1><p>Fotoaufmaß für Werkstatt & Zuhause</p></div>
+    <button id="styleToggle" class="secondary" type="button">Baustellenstil</button>
+  </header>
+
+  <main>
+    <section class="panel controls">
+      <label class="file-button">📷 Foto aufnehmen / auswählen
+        <input id="photoInput" type="file" accept="image/*" capture="environment">
+      </label>
+      <div class="button-row">
+        <button id="addMeasure" type="button" disabled>＋ Maßlinie</button>
+        <button id="undo" class="secondary" type="button" disabled>↶ Rückgängig</button>
+      </div>
+      <div class="button-row">
+        <button id="exportImage" class="secondary" type="button" disabled>Bild exportieren</button>
+        <button id="clearAll" class="danger" type="button" disabled>Alles löschen</button>
+      </div>
+      <p class="hint">Tipp: Maßlinie antippen, um sie auszuwählen. Ausgewählte Linien lassen sich mit dem Finger verschieben. Über „Zeichenwerkzeuge“ kannst du ergänzen.</p>
+    </section>
+
+    <section class="panel editor-panel">
+      <div class="section-heading">
+        <h2>Foto & Zeichnung</h2>
+        <span id="photoStatus" class="status">Noch kein Foto</span>
+      </div>
+      <div id="canvasWrap" class="canvas-wrap">
+        <div id="emptyState"><span>📐</span><strong>Hier erscheint dein Foto</strong><small>Foto aufnehmen oder aus der Mediathek wählen</small></div>
+        <canvas id="editorCanvas" aria-label="Foto mit Maßlinien und Zeichnungen"></canvas>
+      </div>
+      <div class="toolbox">
+        <h3>Zeichenwerkzeuge</h3>
+        <div class="tool-grid">
+          <button class="tool active" data-tool="select" type="button">↖ Auswählen</button>
+          <button class="tool" data-tool="freehand" type="button">✎ Freihand</button>
+          <button class="tool" data-tool="line" type="button">／ Linie</button>
+          <button class="tool" data-tool="rect" type="button">□ Rechteck</button>
+          <button class="tool" data-tool="text" type="button">T Text</button>
+          <button class="tool" data-tool="eraser" type="button">⌫ Löschen</button>
+        </div>
+        <div class="settings-row">
+          <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
+          <label>Linienstärke <input id="widthInput" type="range" min="2" max="12" value="4"></label>
+        </div>
+        <p class="hint">Freihand, Linie und Rechteck: auf dem Foto ziehen. Text: auf das Foto tippen. Löschen: ein Element antippen.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading"><h2>Maße</h2><span class="hint">Werte manuell eintragen</span></div>
+      <div id="measureList" class="measure-list"><p class="empty-list">Noch keine Maßlinien angelegt.</p></div>
+    </section>
+    <section class="panel">
+      <h2>Projekt</h2>
+      <label class="field-label" for="projectName">Projektname</label>
+      <input id="projectName" class="text-input" type="text" placeholder="z. B. Einbauschrank Flur">
+      <button id="saveProject" class="secondary full-width" type="button" disabled>Auf diesem Gerät speichern</button>
+      <p id="saveStatus" class="hint">Die Daten bleiben lokal in diesem Browser. Exportiere wichtige Ergebnisse zusätzlich als Bild.</p>
+    </section>
+  </main>
+
+  <footer>FotoMaß · MVP · Maße bitte vor Fertigung vor Ort prüfen.</footer>
+  <script src="app.js"></script>
+</body>
+</html>
