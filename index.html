@@ -91,8 +91,11 @@
 
       <div class="button-row action-row">
         <button id="undo" class="secondary" type="button" disabled>↶ Rückgängig</button>
-        <button id="exportImage" class="secondary" type="button" disabled>Export PNG</button>
         <button id="clearAll" class="danger" type="button" disabled>Löschen</button>
+      </div>
+      <div class="button-row action-row">
+        <button id="exportImage" type="button" disabled>🖼 Bild speichern</button>
+        <button id="exportProject" class="secondary" type="button" disabled>📦 Projekt-Datei</button>
       </div>
     </section>
 
@@ -107,13 +110,17 @@
     </section>
 
     <section class="panel compact-panel">
-      <label class="field-label" for="projectName">Projekt</label>
+      <label class="field-label" for="projectName">Projektname</label>
       <input id="projectName" class="text-input" type="text" placeholder="Name …" autocomplete="off">
       <div class="button-row" style="margin-top:8px">
-        <button id="saveProject" class="secondary" type="button" disabled>Speichern</button>
-        <button id="loadProject" class="secondary" type="button">Laden</button>
+        <button id="saveProject" class="secondary" type="button" disabled>Im Browser speichern</button>
+        <button id="loadProject" class="secondary" type="button">Browser laden</button>
       </div>
-      <p id="saveStatus" class="hint">Lokal im Browser. Wichtiges zusätzlich als PNG exportieren.</p>
+      <div class="button-row" style="margin-top:8px">
+        <button id="importProject" class="secondary" type="button">📂 Datei laden</button>
+        <input id="projectFileInput" type="file" accept=".json,application/json" hidden>
+      </div>
+      <p id="saveStatus" class="hint">Bild → Galerie/Downloads. Projekt-Datei → beliebig sichern und später wieder öffnen.</p>
     </section>
   </main>
 

@@ -59,9 +59,11 @@
   const buttons = {
     undo: $("undo"),
     export: $("exportImage"),
+    exportProject: $("exportProject"),
     clear: $("clearAll"),
     save: $("saveProject"),
-    load: $("loadProject")
+    load: $("loadProject"),
+    importProject: $("importProject")
   };
 
   const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -260,6 +262,7 @@
 
   function setReady(ready) {
     buttons.export.disabled = !ready;
+    if (buttons.exportProject) buttons.exportProject.disabled = !ready;
     buttons.clear.disabled = !ready;
     buttons.save.disabled = !ready;
     buttons.undo.disabled = history.length === 0;
@@ -725,79 +728,174 @@
     draw();
   });
 
-  buttons.export.addEventListener("click", () => {
-    if (!photoLoaded) return;
-    const name = ($("projectName").value.trim() || "fotomass").replace(/[^\w\-äöüÄÖÜß]+/g, "_");
+  function projectFileName() {
+    return ($("projectName").value.trim() || "fotomass")
+      .replace(/[^\w\-äöüÄÖÜß]+/g, "_") || "fotomass";
+  }
+
+  function buildProjectPayload() {
+    return {
+      version: 7,
+      app: "FotoMaß",
+      projectName: $("projectName").value,
+      photoData,
+      measures,
+      drawings,
+      nextId,
+      unit: unitSelect.value,
+      snap: snapToggle.checked,
+      fontSize: getFontSize(),
+      savedAt: new Date().toISOString()
+    };
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.download = name + ".png";
-    a.href = canvas.toDataURL("image/png");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
     a.click();
-  });
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2500);
+  }
 
-  buttons.save.addEventListener("click", () => {
-    if (!photoLoaded) return;
-    try {
-      const payload = {
-        version: 6,
-        projectName: $("projectName").value,
-        photoData, measures, drawings, nextId,
-        unit: unitSelect.value,
-        snap: snapToggle.checked,
-        fontSize: getFontSize(),
-        savedAt: new Date().toISOString()
-      };
-      localStorage.setItem("fotomass-project", JSON.stringify(payload));
-      $("saveStatus").textContent = "Gespeichert (" + new Date().toLocaleString("de-DE") + ").";
-    } catch (_) {
-      $("saveStatus").textContent = "Speichern fehlgeschlagen – PNG exportieren.";
+  function applyProjectData(data, showFeedback) {
+    if (!data || !data.photoData) {
+      if (showFeedback) $("saveStatus").textContent = "Daten unvollständig (kein Foto).";
+      return;
     }
-  });
-
-  buttons.load.addEventListener("click", () => loadProject(true));
+    photoData = data.photoData;
+    photo = new Image();
+    photo.onload = () => {
+      photoLoaded = true;
+      $("photoStatus").textContent = data.projectName || "Projekt geladen";
+      $("projectName").value = data.projectName || "";
+      measures = data.measures || [];
+      drawings = data.drawings || [];
+      nextId = data.nextId || 1;
+      selectedId = null;
+      history = [];
+      snapPoint = null;
+      if (data.unit) unitSelect.value = data.unit;
+      if (typeof data.snap === "boolean") snapToggle.checked = data.snap;
+      if (data.fontSize) fontSizeInput.value = data.fontSize;
+      resizeCanvas();
+      renderMeasureList();
+      setReady(true);
+      if (showFeedback) {
+        const when = data.savedAt ? new Date(data.savedAt).toLocaleString("de-DE") : "";
+        $("saveStatus").textContent = "Projekt geladen" + (when ? " (" + when + ")" : "") + ".";
+      }
+    };
+    photo.onerror = () => {
+      if (showFeedback) $("saveStatus").textContent = "Foto in der Datei nicht ladbar.";
+    };
+    photo.src = photoData;
+  }
 
   function loadProject(showFeedback) {
     try {
       const raw = localStorage.getItem("fotomass-project");
       if (!raw) {
-        if (showFeedback) $("saveStatus").textContent = "Kein Projekt gefunden.";
+        if (showFeedback) $("saveStatus").textContent = "Kein Browser-Projekt gefunden.";
         return;
       }
-      const data = JSON.parse(raw);
-      if (!data.photoData) {
-        if (showFeedback) $("saveStatus").textContent = "Daten unvollständig.";
-        return;
-      }
-      photoData = data.photoData;
-      photo = new Image();
-      photo.onload = () => {
-        photoLoaded = true;
-        $("photoStatus").textContent = "Gespeichertes Projekt";
-        $("projectName").value = data.projectName || "";
-        measures = data.measures || [];
-        drawings = data.drawings || [];
-        nextId = data.nextId || 1;
-        selectedId = null;
-        history = [];
-        snapPoint = null;
-        if (data.unit) unitSelect.value = data.unit;
-        if (typeof data.snap === "boolean") snapToggle.checked = data.snap;
-        if (data.fontSize) fontSizeInput.value = data.fontSize;
-        resizeCanvas();
-        renderMeasureList();
-        setReady(true);
-        if (showFeedback) {
-          const when = data.savedAt ? new Date(data.savedAt).toLocaleString("de-DE") : "";
-          $("saveStatus").textContent = "Geladen" + (when ? " (" + when + ")" : "") + ".";
-        }
-      };
-      photo.onerror = () => {
-        if (showFeedback) $("saveStatus").textContent = "Foto nicht ladbar.";
-      };
-      photo.src = photoData;
+      applyProjectData(JSON.parse(raw), showFeedback);
     } catch (_) {
       if (showFeedback) $("saveStatus").textContent = "Laden fehlgeschlagen.";
     }
   }
+
+  // Bild speichern → Teilen/Galerie wenn möglich, sonst Download
+  buttons.export.addEventListener("click", async () => {
+    if (!photoLoaded) return;
+    const name = projectFileName() + ".png";
+    $("saveStatus").textContent = "Bild wird vorbereitet …";
+    try {
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob"))), "image/png");
+      });
+      const file = new File([blob], name, { type: "image/png" });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: projectFileName(),
+            text: "FotoMaß Aufmaß"
+          });
+          $("saveStatus").textContent = "Bild geteilt – im Menü „Bild speichern“ / Galerie wählen.";
+          return;
+        } catch (err) {
+          if (err && err.name === "AbortError") {
+            $("saveStatus").textContent = "Teilen abgebrochen.";
+            return;
+          }
+        }
+      }
+
+      downloadBlob(blob, name);
+      $("saveStatus").textContent = "Bild in Downloads gespeichert.";
+    } catch (_) {
+      try {
+        const a = document.createElement("a");
+        a.download = name;
+        a.href = canvas.toDataURL("image/png");
+        a.click();
+        $("saveStatus").textContent = "Bild als PNG exportiert.";
+      } catch (e2) {
+        $("saveStatus").textContent = "Bild-Export fehlgeschlagen.";
+      }
+    }
+  });
+
+  // Projekt als Datei
+  buttons.exportProject.addEventListener("click", () => {
+    if (!photoLoaded) return;
+    try {
+      const json = JSON.stringify(buildProjectPayload());
+      const blob = new Blob([json], { type: "application/json" });
+      downloadBlob(blob, projectFileName() + ".fotomass.json");
+      $("saveStatus").textContent = "Projekt-Datei gespeichert. Später mit „Datei laden“ öffnen.";
+    } catch (_) {
+      $("saveStatus").textContent = "Projekt-Datei fehlgeschlagen (evtl. Foto zu groß).";
+    }
+  });
+
+  buttons.save.addEventListener("click", () => {
+    if (!photoLoaded) return;
+    try {
+      localStorage.setItem("fotomass-project", JSON.stringify(buildProjectPayload()));
+      $("saveStatus").textContent = "Im Browser gespeichert (" + new Date().toLocaleString("de-DE") + ").";
+    } catch (_) {
+      $("saveStatus").textContent = "Browser-Speicher voll – Projekt-Datei oder Bild nutzen.";
+    }
+  });
+
+  buttons.load.addEventListener("click", () => loadProject(true));
+
+  buttons.importProject.addEventListener("click", () => {
+    $("projectFileInput").click();
+  });
+  $("projectFileInput").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        applyProjectData(JSON.parse(reader.result), true);
+      } catch (_) {
+        $("saveStatus").textContent = "Ungültige Projekt-Datei.";
+      }
+    };
+    reader.onerror = () => {
+      $("saveStatus").textContent = "Datei konnte nicht gelesen werden.";
+    };
+    reader.readAsText(file);
+  });
 
   $("styleToggle").addEventListener("click", () => {
     document.body.classList.toggle("site-bold");
