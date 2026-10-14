@@ -8,6 +8,7 @@
   const unitSelect = $("unitSelect");
   const colorInput = $("colorInput");
   const widthInput = $("widthInput");
+  const fontSizeInput = $("fontSizeInput");
   const snapToggle = $("snapToggle");
   const textDialog = $("textDialog");
   const textDialogInput = $("textDialogInput");
@@ -29,9 +30,11 @@
   let activeDrawing = null;
   let pendingTextPoint = null;
   let editingMeasureId = null;
-  let snapPoint = null; // aktuell eingerasteter Punkt {x,y}
+  let snapPoint = null;
   let recognition = null;
   let isListening = false;
+  let speechTimeout = null;
+  let speechSupported = false;
 
   const buttons = {
     undo: $("undo"),
@@ -43,60 +46,115 @@
 
   const HANDLE_R = 14;
   const HIT_TOLERANCE = 22;
-  const SNAP_DIST = 28; // Anfunk-Toleranz in Canvas-Pixeln
+  const SNAP_DIST = 28;
 
-  // ---------- Speech Recognition (optional) ----------
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = "de-DE";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.continuous = false;
+  // ---------- Spracheingabe (robust, mit Timeout) ----------
+  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    recognition.onresult = (event) => {
-      const raw = (event.results[0][0].transcript || "").trim();
-      // Nur Zahlen und Dezimalzeichen behalten
-      const cleaned = raw
-        .replace(/,/g, ".")
-        .replace(/[^\d.]/g, "")
-        .replace(/(\..*)\./g, "$1");
-      if (cleaned) {
-        valueDialogInput.value = cleaned;
-        valueDialogHint.textContent = "Erkannt: " + cleaned;
-      } else {
-        valueDialogHint.textContent = "Keine Zahl erkannt. Nochmal versuchen oder tippen.";
-      }
-      stopListening();
-    };
-    recognition.onerror = () => {
-      valueDialogHint.textContent = "Spracherkennung fehlgeschlagen. Bitte tippen.";
-      stopListening();
-    };
-    recognition.onend = () => stopListening();
+  function initSpeech() {
+    if (!SpeechRecognitionAPI) {
+      speechSupported = false;
+      return;
+    }
+    try {
+      recognition = new SpeechRecognitionAPI();
+      recognition.lang = "de-DE";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.continuous = false;
+
+      recognition.onresult = (event) => {
+        clearSpeechTimeout();
+        const raw = (event.results[0] && event.results[0][0] && event.results[0][0].transcript) || "";
+        const cleaned = raw
+          .replace(/,/g, ".")
+          .replace(/[^\d.]/g, "")
+          .replace(/(\..*)\./g, "$1");
+        if (cleaned) {
+          valueDialogInput.value = cleaned;
+          valueDialogHint.textContent = "Erkannt: " + cleaned;
+        } else {
+          valueDialogHint.textContent = "Keine Zahl erkannt – bitte tippen.";
+        }
+        stopListening(false);
+      };
+
+      recognition.onerror = (event) => {
+        clearSpeechTimeout();
+        const err = event.error || "";
+        if (err === "not-allowed" || err === "service-not-allowed") {
+          valueDialogHint.textContent = "Mikrofon-Zugriff verweigert. Bitte tippen.";
+        } else if (err === "no-speech") {
+          valueDialogHint.textContent = "Nichts gehört – nochmal 🎤 oder tippen.";
+        } else if (err === "aborted") {
+          // absichtlich abgebrochen, keine Meldung
+        } else {
+          valueDialogHint.textContent = "Sprache nicht verfügbar – bitte tippen.";
+        }
+        stopListening(false);
+      };
+
+      recognition.onend = () => {
+        clearSpeechTimeout();
+        // onend kommt immer – UI zurücksetzen, falls noch aktiv
+        if (isListening) stopListening(false);
+      };
+
+      speechSupported = true;
+    } catch (e) {
+      speechSupported = false;
+      recognition = null;
+    }
+  }
+
+  function clearSpeechTimeout() {
+    if (speechTimeout) {
+      clearTimeout(speechTimeout);
+      speechTimeout = null;
+    }
+  }
+
+  function stopListening(abort) {
+    clearSpeechTimeout();
+    isListening = false;
+    valueDialogMic.classList.remove("listening");
+    if (recognition) {
+      try {
+        if (abort) recognition.abort();
+        else recognition.stop();
+      } catch (_) {}
+    }
   }
 
   function startListening() {
-    if (!recognition) {
-      valueDialogHint.textContent = "Spracheingabe wird von diesem Browser nicht unterstützt. Bitte tippen.";
+    if (!speechSupported || !recognition) {
+      valueDialogHint.textContent = "Spracheingabe wird hier nicht unterstützt. Bitte tippen.";
       return;
     }
-    if (isListening) return;
-    try {
-      isListening = true;
-      valueDialogMic.classList.add("listening");
-      valueDialogHint.textContent = "Hört zu … Zahl sagen (z. B. „zwölfhundert“ oder „1234“)";
-      recognition.start();
-    } catch (e) {
-      stopListening();
-    }
+    // Immer zuerst sauber stoppen, falls noch etwas läuft
+    stopListening(true);
+
+    // Kurz warten, damit der Browser den vorherigen Vorgang freigibt
+    setTimeout(() => {
+      if (valueDialog.hidden) return;
+      try {
+        isListening = true;
+        valueDialogMic.classList.add("listening");
+        valueDialogHint.textContent = "Hört zu … Zahl sagen, dann warten.";
+        recognition.start();
+        // Harter Timeout nach 6 Sekunden – verhindert Hängen
+        speechTimeout = setTimeout(() => {
+          valueDialogHint.textContent = "Zeit abgelaufen – nochmal 🎤 oder tippen.";
+          stopListening(true);
+        }, 6000);
+      } catch (e) {
+        valueDialogHint.textContent = "Mikrofon nicht startklar. Bitte tippen.";
+        stopListening(false);
+      }
+    }, 150);
   }
 
-  function stopListening() {
-    isListening = false;
-    valueDialogMic.classList.remove("listening");
-    try { recognition && recognition.stop(); } catch (_) {}
-  }
+  initSpeech();
 
   // ---------- History ----------
   function remember() {
@@ -115,6 +173,10 @@
     buttons.clear.disabled = !ready;
     buttons.save.disabled = !ready;
     buttons.undo.disabled = history.length === 0;
+  }
+
+  function getFontSize() {
+    return Number(fontSizeInput.value) || 18;
   }
 
   // ---------- Canvas ----------
@@ -136,14 +198,10 @@
     measures.forEach((m) => drawMeasure(m));
 
     if (activeDrawing && activeDrawing.type !== "move-measure" && activeDrawing.type !== "move-endpoint") {
-      if (activeDrawing.type === "measure") {
-        drawMeasurePreview(activeDrawing);
-      } else {
-        drawShape(activeDrawing);
-      }
+      if (activeDrawing.type === "measure") drawMeasurePreview(activeDrawing);
+      else drawShape(activeDrawing);
     }
 
-    // Snap-Indikator
     if (snapPoint) {
       ctx.save();
       ctx.beginPath();
@@ -160,7 +218,6 @@
   function drawMeasurePreview(d) {
     ctx.save();
     ctx.strokeStyle = d.color || colorInput.value;
-    ctx.fillStyle = d.color || colorInput.value;
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
     ctx.setLineDash([6, 4]);
@@ -172,22 +229,32 @@
     ctx.restore();
   }
 
+  /**
+   * DIN-ähnliche Bemaßung:
+   * - Maßzahl parallel zur Maßlinie
+   * - Lesbar von unten bzw. von rechts (nicht auf dem Kopf)
+   * - Leicht über der Linie versetzt
+   */
   function drawMeasure(m) {
     const chosen = m.id === selectedId;
     const color = m.color || "#ff3b30";
+    const fs = getFontSize();
+
     ctx.save();
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = chosen ? 4 : 3;
     ctx.lineCap = "round";
 
+    // Maßlinie
     ctx.beginPath();
     ctx.moveTo(m.x1, m.y1);
     ctx.lineTo(m.x2, m.y2);
     ctx.stroke();
 
+    // Pfeilspitzen
     const angle = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
-    const head = 11;
+    const head = Math.max(9, fs * 0.55);
     [
       [m.x1, m.y1, angle],
       [m.x2, m.y2, angle + Math.PI]
@@ -200,20 +267,41 @@
       ctx.fill();
     });
 
-    // Beschriftung bleibt immer auf der Linie
+    // Beschriftung parallel zur Linie (DIN)
     const mx = (m.x1 + m.x2) / 2;
     const my = (m.y1 + m.y2) / 2;
     const label = `${m.value || "?"}${m.unit || " mm"}`;
-    ctx.font = "bold 17px system-ui, sans-serif";
+    ctx.font = `bold ${fs}px system-ui, sans-serif`;
     const tw = ctx.measureText(label).width;
+    const th = fs + 6;
+    const offset = fs * 0.7; // Abstand über der Linie
+
+    // Winkel so drehen, dass Text lesbar bleibt (nicht kopfüber)
+    let textAngle = angle;
+    // Wenn Linie nach links zeigt oder steil nach oben-links → 180° drehen
+    if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) {
+      textAngle += Math.PI;
+    }
+
+    ctx.translate(mx, my);
+    ctx.rotate(textAngle);
+
+    // Hintergrund leicht versetzt „über“ der Linie (negative Y nach Rotation = senkrecht zur Linie)
+    const padX = 5;
+    const padY = 3;
     ctx.fillStyle = "rgba(255,255,255,0.93)";
-    ctx.fillRect(mx - tw / 2 - 5, my - 26, tw + 10, 24);
+    ctx.fillRect(-tw / 2 - padX, -offset - th / 2 - padY, tw + padX * 2, th + padY * 2);
+
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(label, mx, my - 14);
+    ctx.fillText(label, 0, -offset);
 
+    ctx.restore();
+
+    // Auswahlrahmen + Handles (ohne Rotation)
     if (chosen) {
+      ctx.save();
       ctx.setLineDash([5, 4]);
       ctx.strokeStyle = "#1682d5";
       ctx.lineWidth = 1.5;
@@ -227,8 +315,8 @@
       ctx.setLineDash([]);
       drawHandle(m.x1, m.y1);
       drawHandle(m.x2, m.y2);
+      ctx.restore();
     }
-    ctx.restore();
   }
 
   function drawHandle(x, y) {
@@ -264,7 +352,8 @@
     } else if (d.type === "rect") {
       ctx.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
     } else if (d.type === "text") {
-      ctx.font = "bold 22px system-ui, sans-serif";
+      const fs = d.fontSize || getFontSize() + 4;
+      ctx.font = `bold ${fs}px system-ui, sans-serif`;
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
       ctx.fillText(d.text || "Notiz", d.x1, d.y1);
@@ -272,7 +361,7 @@
     ctx.restore();
   }
 
-  // ---------- Anfunkte (Snap) ----------
+  // ---------- Anfunkte ----------
   function getSnapCandidates(excludeId) {
     const pts = [];
     measures.forEach((m) => {
@@ -338,9 +427,8 @@
         input.value = m.value;
         draw();
       });
-      // Tippen auf das Feld öffnet auch den Dialog (mit Mic)
       input.addEventListener("focus", () => {
-        openValueDialog(m.id);
+        openValueDialog(m.id, false);
         input.blur();
       });
 
@@ -369,7 +457,6 @@
     });
   }
 
-  // ---------- Werkzeug ----------
   function setTool(name) {
     tool = name;
     document.querySelectorAll(".tool").forEach((b) => {
@@ -378,7 +465,6 @@
     canvas.style.cursor = tool === "select" ? "default" : "crosshair";
   }
 
-  // ---------- Koordinaten ----------
   function pointFromEvent(e) {
     const r = canvas.getBoundingClientRect();
     return {
@@ -399,7 +485,6 @@
     return Math.hypot(p.x - (x1 + t * dx), p.y - (y1 + t * dy));
   }
 
-  // ---------- Hit-Tests ----------
   function hitMeasure(p) {
     if (selectedId !== null) {
       const m = measures.find((x) => x.id === selectedId);
@@ -436,15 +521,16 @@
           (p.y >= y1 - 8 && p.y <= y2 + 8 && (Math.abs(p.x - x1) < 12 || Math.abs(p.x - x2) < 12));
         if (nearBorder) return i;
       } else if (d.type === "text") {
-        ctx.font = "bold 22px system-ui, sans-serif";
+        const fs = d.fontSize || getFontSize() + 4;
+        ctx.font = `bold ${fs}px system-ui, sans-serif`;
         const tw = ctx.measureText(d.text || "Notiz").width;
-        if (p.x >= d.x1 - 4 && p.x <= d.x1 + tw + 4 && p.y >= d.y1 - 24 && p.y <= d.y1 + 6) return i;
+        if (p.x >= d.x1 - 4 && p.x <= d.x1 + tw + 4 && p.y >= d.y1 - fs && p.y <= d.y1 + 6) return i;
       }
     }
     return -1;
   }
 
-  // ---------- Foto laden (Kamera + Galerie) ----------
+  // ---------- Foto ----------
   function loadImageFile(file) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -526,7 +612,7 @@
     if (!photoLoaded) return;
     try {
       const payload = {
-        version: 3,
+        version: 4,
         projectName: $("projectName").value,
         photoData,
         measures,
@@ -534,6 +620,7 @@
         nextId,
         unit: unitSelect.value,
         snap: snapToggle.checked,
+        fontSize: getFontSize(),
         savedAt: new Date().toISOString()
       };
       localStorage.setItem("fotomass-project", JSON.stringify(payload));
@@ -574,6 +661,7 @@
         snapPoint = null;
         if (data.unit) unitSelect.value = data.unit;
         if (typeof data.snap === "boolean") snapToggle.checked = data.snap;
+        if (data.fontSize) fontSizeInput.value = data.fontSize;
         resizeCanvas();
         renderMeasureList();
         setReady(true);
@@ -619,6 +707,9 @@
     }
   });
 
+  // Schriftgröße live aktualisieren
+  fontSizeInput.addEventListener("input", () => draw());
+
   document.querySelectorAll(".tool").forEach((b) => {
     b.addEventListener("click", () => setTool(b.dataset.tool));
   });
@@ -646,7 +737,8 @@
         y1: pendingTextPoint.y,
         text: txt,
         color: colorInput.value,
-        width: Number(widthInput.value)
+        width: Number(widthInput.value),
+        fontSize: getFontSize() + 4
       });
       draw();
     }
@@ -657,23 +749,25 @@
     if (e.key === "Escape") closeTextDialog();
   });
 
-  // ---------- Maßwert-Dialog (Tipp + Sprache) ----------
+  // ---------- Maßwert-Dialog ----------
   function openValueDialog(measureId, startMic) {
+    // Vorherige Erkennung abbrechen
+    stopListening(true);
     editingMeasureId = measureId;
     const m = measures.find((x) => x.id === measureId);
     valueDialogInput.value = m ? (m.value || "") : "";
-    valueDialogHint.textContent = recognition
-      ? "Zahl sprechen oder tippen."
+    valueDialogHint.textContent = speechSupported
+      ? "Zahl tippen oder 🎤 antippen."
       : "Sprache nicht verfügbar – bitte tippen.";
     valueDialog.hidden = false;
     setTimeout(() => {
       valueDialogInput.focus();
-      if (startMic) startListening();
-    }, 80);
+      if (startMic && speechSupported) startListening();
+    }, 100);
   }
 
   function closeValueDialog() {
-    stopListening();
+    stopListening(true);
     valueDialog.hidden = true;
     editingMeasureId = null;
   }
@@ -692,15 +786,19 @@
     closeValueDialog();
   });
   valueDialogMic.addEventListener("click", () => {
-    if (isListening) stopListening();
-    else startListening();
+    if (isListening) {
+      stopListening(true);
+      valueDialogHint.textContent = "Gestoppt – tippen oder nochmal 🎤.";
+    } else {
+      startListening();
+    }
   });
   valueDialogInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("valueDialogOk").click();
     if (e.key === "Escape") closeValueDialog();
   });
 
-  // ---------- Pointer-Events ----------
+  // ---------- Pointer ----------
   canvas.addEventListener("pointerdown", (e) => {
     if (!photoLoaded) return;
     e.preventDefault();
@@ -715,13 +813,8 @@
         selectedId = hit.measure.id;
         remember();
         if (hit.endpoint === 1 || hit.endpoint === 2) {
-          activeDrawing = {
-            type: "move-endpoint",
-            id: hit.measure.id,
-            endpoint: hit.endpoint
-          };
+          activeDrawing = { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint };
         } else {
-          // Doppeltes Tippen auf die Linie öffnet Werteingabe
           activeDrawing = {
             type: "move-measure",
             id: hit.measure.id,
@@ -762,7 +855,6 @@
       return;
     }
 
-    // Neue Form / Maßlinie – mit Snap am Start
     remember();
     if (tool === "measure") {
       const sn = findSnap(p);
@@ -826,7 +918,6 @@
       return;
     }
 
-    // Zeichnung fortsetzen – Snap am Ende bei Maßlinie
     if (activeDrawing.type === "measure") {
       const sn = findSnap(p);
       if (sn) {
@@ -851,10 +942,7 @@
     }
 
     if (activeDrawing.type === "move-measure") {
-      // Wenn kaum bewegt → Werteingabe öffnen (Antippen der Maßlinie)
-      if (!activeDrawing.moved) {
-        openValueDialog(activeDrawing.id);
-      }
+      if (!activeDrawing.moved) openValueDialog(activeDrawing.id, false);
       activeDrawing = null;
       pointerStart = null;
       snapPoint = null;
@@ -872,7 +960,6 @@
       return;
     }
 
-    // Zu kurze Linien verwerfen
     if (
       (activeDrawing.type === "line" || activeDrawing.type === "measure") &&
       dist({ x: activeDrawing.x1, y: activeDrawing.y1 }, { x: activeDrawing.x2, y: activeDrawing.y2 }) < 8
@@ -896,8 +983,7 @@
         color: activeDrawing.color
       });
       selectedId = activeDrawing.id;
-      // Nach dem Zeichnen direkt Werteingabe anbieten
-      openValueDialog(activeDrawing.id);
+      openValueDialog(activeDrawing.id, false);
     } else {
       drawings.push(activeDrawing);
     }

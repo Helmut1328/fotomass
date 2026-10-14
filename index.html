@@ -66,6 +66,7 @@
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
           <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
+          <label>Schrift <input id="fontSizeInput" type="range" min="12" max="32" value="18"></label>
           <label>Einheit
             <select id="unitSelect">
               <option value=" mm">mm</option>
@@ -78,7 +79,7 @@
             Anfunkte
           </label>
         </div>
-        <p class="hint">Maßlinie ziehen · Endpunkte greifen · Anfunkte rasten an bestehende Maße an · Maß antippen oder 🎤 für Spracheingabe</p>
+        <p class="hint">Maßlinie ziehen · Endpunkte greifen · Anfunkte · Maß antippen oder 🎤 · Schriftgröße einstellbar · Bemaßung parallel zur Linie (DIN)</p>
       </div>
 
       <div class="button-row" style="margin-top:12px">
@@ -126,7 +127,7 @@
     </div>
   </div>
 
-  <!-- Maßwert-Dialog (Tipp + Sprache) -->
+  <!-- Maßwert-Dialog -->
   <div id="valueDialog" class="dialog" hidden>
     <div class="dialog-box">
       <label for="valueDialogInput">Maßwert</label>
@@ -134,7 +135,7 @@
         <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234">
         <button id="valueDialogMic" class="mic-btn" type="button" title="Per Sprache eingeben">🎤</button>
       </div>
-      <p id="valueDialogHint" class="hint">Zahl sprechen oder tippen. Einheit steht darunter.</p>
+      <p id="valueDialogHint" class="hint">Zahl tippen oder 🎤 antippen.</p>
       <div class="dialog-actions">
         <button id="valueDialogCancel" class="secondary" type="button">Abbrechen</button>
         <button id="valueDialogOk" type="button">Übernehmen</button>
