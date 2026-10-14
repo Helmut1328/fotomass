@@ -1,11 +1,20 @@
+/* FotoMaß – Hauptprogramm
+ * Aufbau: Zustand › Hilfsfunktionen › Verlauf › Zoom › Zeichnen › Treffer › Maßliste ›
+ *         Foto › Projekt › Export › Dialoge › Zeigerbedienung › Start
+ * Sprache: speech.js · Speichern/Teilen: storage.js
+ */
 (() => {
   "use strict";
 
+  const { speech, storage } = window.FM;
   const $ = (id) => document.getElementById(id);
+
+  // ---------- DOM ----------
   const canvas = $("editorCanvas");
   const ctx = canvas.getContext("2d");
-  const emptyState = $("emptyState");
+  const baseCanvas = document.createElement("canvas"); // verkleinertes Foto ohne Zeichnung
   const canvasWrap = $("canvasWrap");
+  const emptyState = $("emptyState");
   const crosshairEl = $("crosshair");
   const unitSelect = $("unitSelect");
   const colorInput = $("colorInput");
@@ -13,541 +22,332 @@
   const fontSizeInput = $("fontSizeInput");
   const snapToggle = $("snapToggle");
   const crosshairToggle = $("crosshairToggle");
+  const zoomLabel = $("zoomLabel");
   const textDialog = $("textDialog");
   const textDialogInput = $("textDialogInput");
   const valueDialog = $("valueDialog");
-  const valueDialogInput = $("valueDialogInput");
-  const valueDialogMic = $("valueDialogMic");
-  const valueDialogHint = $("valueDialogHint");
-  const zoomLabel = $("zoomLabel");
+  const vInput = $("valueDialogInput");
+  const vUnit = $("valueDialogUnit");
+  const vMic = $("valueDialogMic");
+  const vHint = $("valueDialogHint");
+  const optAutoConfirm = $("optAutoConfirm");
+  const optAutoMic = $("optAutoMic");
+  const actionDialog = $("actionDialog");
+  const saveDialog = $("saveDialog");
+  const projectsDialog = $("projectsDialog");
+  const buttons = {
+    undo: $("undo"), export: $("exportImage"), exportProject: $("exportProject"),
+    clear: $("clearAll"), save: $("saveProject"), load: $("loadProject"), importProject: $("importProject")
+  };
 
-  let photo = new Image();
+  // ---------- Zustand ----------
+  const MAX_SIDE = 2000;        // längste Bildseite im Editor
+  const CROSSHAIR_OFFSET_Y = -52;
   let photoLoaded = false;
-  let photoData = null;
+  let photoData = null;         // verkleinertes JPEG (Data-URL) -> wird im Projekt gespeichert
+  let originalBlob = null;      // Original-Foto (nur in dieser Sitzung vorhanden)
   let tool = "select";
   let selectedId = null;
   let measures = [];
   let drawings = [];
   let history = [];
   let nextId = 1;
-  let pointerStart = null;
   let activeDrawing = null;
-  let pendingTextPoint = null;
-  let editingMeasureId = null;
+  let pointerStart = null;
+  let preSnap = null;           // Zustand vor der laufenden Geste (für Rückgängig)
   let snapPoint = null;
-  let lastTapTime = 0;
-  let lastTapMeasureId = null;
-  let lastPointerUpAt = 0;
-  let tapArmedId = null; // nach 1. Tipp: diese Maß-ID wartet auf 2. Tipp
-  let tapArmedUntil = 0;
+  let lastTap = { id: null, time: 0 };
+  let longPressTimer = null;
+  let pressInfo = null;
+  let pendingFocus = false;
+  let pendingTextPoint = null;
+  let actionMeasureId = null;
+  let actionColorRemembered = false;
+  let exportFiles = null;
+  let exportUrls = [];
 
-  // Zoom / Pan (nur mit 2 Fingern)
-  let viewScale = 1;
-  let viewOffsetX = 0;
-  let viewOffsetY = 0;
-  let fitScale = 1;
-  let pointers = new Map();
-  let lastPinchDist = 0;
-  let lastPinchMid = null;
-  let multiTouchMode = false; // true sobald 2 Finger aktiv waren
+  // Zoom / Schieben
+  let viewScale = 1, viewOffsetX = 0, viewOffsetY = 0, fitScale = 1;
+  const pointers = new Map();
+  let lastPinchDist = 0, lastPinchMid = null, multiTouchMode = false;
 
-  const CROSSHAIR_OFFSET_Y = -52;
-  const HANDLE_R = 22;
-  const HIT_TOLERANCE = 26;
-  const SNAP_DIST = 28;
+  // ---------- Größen ----------
+  // Handles, Treffer-Toleranz und Einrasten sind in BILDSCHIRM-Pixeln angegeben,
+  // damit sie auf dem Handy immer gut treffbar sind – egal wie weit das Foto verkleinert angezeigt wird.
+  const totalScale = () => fitScale * viewScale;
+  const scr = (n) => n / totalScale();
+  // Linienstärke und Schrift sind relativ zur Bildgröße (Regler-Einheiten × K)
+  const K = () => Math.max(canvas.width, canvas.height) / 560;
+  const getFontSize = () => Number(fontSizeInput.value) || 24;
+  const fmt = (v) => String(v ?? "").replace(".", ",");
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-  const buttons = {
-    undo: $("undo"),
-    export: $("exportImage"),
-    exportProject: $("exportProject"),
-    clear: $("clearAll"),
-    save: $("saveProject"),
-    load: $("loadProject"),
-    importProject: $("importProject")
-  };
-
-  const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  // ---------- Sprache ----------
-  const DE_NUM = {
-    null: 0, nullen: 0, eins: 1, ein: 1, eine: 1, zwei: 2, drei: 3, vier: 4, fünf: 5, funf: 5,
-    sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwölf: 12, zwolf: 12,
-    dreizehn: 13, vierzehn: 14, fünfzehn: 15, funfzehn: 15, sechzehn: 16, siebzehn: 17,
-    achtzehn: 18, neunzehn: 19, zwanzig: 20, dreißig: 30, dreissig: 30, vierzig: 40,
-    fünfzig: 50, funfzig: 50, sechzig: 60, siebzig: 70, achtzig: 80, neunzig: 90,
-    hundert: 100, tausend: 1000
-  };
-
-  function parseSpokenNumber(raw) {
-    if (!raw) return "";
-    // Ziffern direkt
-    const digits = raw.replace(/,/g, ".").replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1");
-    if (digits && /\d/.test(digits)) return digits;
-
-    // Einfache deutsche Zahlwörter
-    const tokens = raw.toLowerCase()
-      .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
-      .replace(/[^a-z\s-]/g, " ")
-      .split(/[\s-]+/)
-      .filter(Boolean);
-
-    let total = 0;
-    let current = 0;
-    let found = false;
-    for (const t of tokens) {
-      const key = t.replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü");
-      // normalize back for lookup without umlauts too
-      const v = DE_NUM[t] !== undefined ? DE_NUM[t]
-        : (DE_NUM[key] !== undefined ? DE_NUM[key] : undefined);
-      if (v === undefined) continue;
-      found = true;
-      if (v === 1000) {
-        current = (current || 1) * 1000;
-        total += current;
-        current = 0;
-      } else if (v === 100) {
-        current = (current || 1) * 100;
-      } else if (v >= 20) {
-        current += v;
-      } else {
-        current += v;
-      }
-    }
-    total += current;
-    return found ? String(total) : "";
+  // ---------- Status ----------
+  const setStatus = (t) => { $("saveStatus").textContent = t; };
+  const hasWork = () => measures.length > 0 || drawings.length > 0;
+  function confirmReplace() {
+    return !hasWork() || confirm("Das aktuelle Aufmaß wird ersetzt. Fortfahren?\n(Tipp: vorher „In Dateien sichern“.)");
   }
 
-  function speakNumber() {
-    if (!SpeechAPI) {
-      valueDialogHint.textContent = "Sprache wird hier nicht unterstützt (Chrome/Android empfohlen). Bitte tippen.";
-      return;
-    }
-    // Nur bei HTTPS oder localhost
-    if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-      valueDialogHint.textContent = "Sprache braucht HTTPS (z. B. GitHub Pages). Bitte tippen.";
-      return;
-    }
-
-    try {
-      if (window._fmRec) {
-        window._fmRec.onresult = null;
-        window._fmRec.onerror = null;
-        window._fmRec.onend = null;
-        try { window._fmRec.abort(); } catch (_) {}
-        window._fmRec = null;
-      }
-    } catch (_) {}
-
-    let rec;
-    try {
-      rec = new SpeechAPI();
-    } catch (_) {
-      valueDialogHint.textContent = "Sprache nicht startbar – bitte tippen.";
-      return;
-    }
-
-    window._fmRec = rec;
-    rec.lang = "de-DE";
-    rec.interimResults = true;
-    rec.maxAlternatives = 5;
-    rec.continuous = false;
-
-    valueDialogMic.classList.add("listening");
-    valueDialogHint.textContent = "Hört zu … Zahl sagen (z. B. „1234“ oder „zwölfhundert“).";
-
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      valueDialogMic.classList.remove("listening");
-      try { rec.stop(); } catch (_) {}
-      try { rec.abort(); } catch (_) {}
-      window._fmRec = null;
-    };
-
-    const timeout = setTimeout(() => {
-      valueDialogHint.textContent = "Zeit abgelaufen – nochmal 🎤 oder tippen.";
-      finish();
-    }, 8000);
-
-    rec.onresult = (ev) => {
-      let best = "";
-      let rawBest = "";
-      for (let i = 0; i < ev.results.length; i++) {
-        for (let j = 0; j < ev.results[i].length; j++) {
-          const t = ev.results[i][j].transcript || "";
-          const num = parseSpokenNumber(t);
-          if (num && num.length >= best.length) {
-            best = num;
-            rawBest = t;
-          }
-          if (!rawBest) rawBest = t;
-        }
-        // finales Ergebnis
-        if (ev.results[i].isFinal && best) {
-          clearTimeout(timeout);
-          valueDialogInput.value = best;
-          valueDialogHint.textContent = "Erkannt: " + best;
-          finish();
-          return;
-        }
-      }
-      if (best) {
-        valueDialogInput.value = best;
-        valueDialogHint.textContent = "… " + best;
-      } else if (rawBest) {
-        valueDialogHint.textContent = "… „" + rawBest + "“";
-      }
-    };
-
-    rec.onerror = (ev) => {
-      clearTimeout(timeout);
-      const err = ev.error || "";
-      if (err === "not-allowed" || err === "service-not-allowed") {
-        valueDialogHint.textContent = "Mikrofon verweigert – in Browser-Einstellungen erlauben.";
-      } else if (err === "no-speech") {
-        valueDialogHint.textContent = "Nichts gehört – nochmal 🎤.";
-      } else if (err === "network") {
-        valueDialogHint.textContent = "Netzwerkfehler bei Sprache – bitte tippen.";
-      } else if (err !== "aborted") {
-        valueDialogHint.textContent = "Sprache-Fehler (" + err + ") – bitte tippen.";
-      }
-      finish();
-    };
-
-    rec.onend = () => {
-      clearTimeout(timeout);
-      if (!finished) {
-        if (!valueDialogInput.value) {
-          valueDialogHint.textContent = "Keine Zahl erkannt – nochmal 🎤 oder tippen.";
-        }
-        finish();
-      }
-    };
-
-    // Direkt im User-Gesture-Kontext starten
-    try {
-      rec.start();
-    } catch (e) {
-      clearTimeout(timeout);
-      valueDialogHint.textContent = "Start fehlgeschlagen – 1 Sek. warten, nochmal 🎤.";
-      finish();
-    }
-  }
-
-  function stopSpeech() {
-    try {
-      if (window._fmRec) {
-        window._fmRec.onresult = null;
-        window._fmRec.onerror = null;
-        window._fmRec.onend = null;
-        try { window._fmRec.abort(); } catch (_) {}
-        window._fmRec = null;
-      }
-    } catch (_) {}
-    valueDialogMic.classList.remove("listening");
-  }
-
-  // ---------- History ----------
-  function remember() {
-    history.push(JSON.stringify({
-      measures: JSON.parse(JSON.stringify(measures)),
-      drawings: JSON.parse(JSON.stringify(drawings)),
-      selectedId,
-      nextId
-    }));
+  // ---------- Verlauf ----------
+  const snapshot = () => JSON.stringify({ measures, drawings, selectedId, nextId });
+  function pushHistory(s) {
+    history.push(s);
     if (history.length > 40) history.shift();
-    buttons.undo.disabled = history.length === 0;
+    buttons.undo.disabled = false;
   }
+  const remember = () => pushHistory(snapshot());
 
   function setReady(ready) {
     buttons.export.disabled = !ready;
-    if (buttons.exportProject) buttons.exportProject.disabled = !ready;
+    buttons.exportProject.disabled = !ready;
     buttons.clear.disabled = !ready;
     buttons.save.disabled = !ready;
     buttons.undo.disabled = history.length === 0;
   }
 
-  function getFontSize() {
-    return Number(fontSizeInput.value) || 18;
+  // Nach jeder Änderung: Liste + Zeichnung neu, Zwischenspeicher planen
+  function refresh() {
+    renderMeasureList();
+    draw();
+    scheduleAutosave();
   }
 
-  function hideEmptyState() {
-    emptyState.hidden = true;
-    emptyState.classList.add("is-hidden");
-    emptyState.style.display = "none";
-  }
-
-  function showEmptyState() {
-    emptyState.hidden = false;
-    emptyState.classList.remove("is-hidden");
-    emptyState.style.display = "";
-  }
-
-  // ---------- Zoom / Fit ----------
+  // ---------- Zoom ----------
   function computeFitScale() {
     if (!photoLoaded) return 1;
     const wrap = canvasWrap.getBoundingClientRect();
-    const sx = wrap.width / canvas.width;
-    const sy = wrap.height / canvas.height;
-    return Math.min(sx, sy);
+    return Math.min(wrap.width / canvas.width, wrap.height / canvas.height);
   }
-
   function applyViewTransform() {
     if (!photoLoaded) return;
-    const totalScale = fitScale * viewScale;
     canvas.style.width = canvas.width + "px";
     canvas.style.height = canvas.height + "px";
-    canvas.style.transform =
-      `translate(calc(-50% + ${viewOffsetX}px), calc(-50% + ${viewOffsetY}px)) scale(${totalScale})`;
+    canvas.style.transform = `translate(calc(-50% + ${viewOffsetX}px), calc(-50% + ${viewOffsetY}px)) scale(${totalScale()})`;
     zoomLabel.textContent = Math.round(viewScale * 100) + " %";
   }
-
   function fitToView() {
     if (!photoLoaded) return;
     fitScale = computeFitScale();
-    viewScale = 1;
-    viewOffsetX = 0;
-    viewOffsetY = 0;
+    viewScale = 1; viewOffsetX = 0; viewOffsetY = 0;
     applyViewTransform();
   }
-
-  function setZoom(newScale, midClientX, midClientY) {
+  function setZoom(next, midX, midY) {
     const prev = viewScale;
-    viewScale = Math.max(0.4, Math.min(8, newScale));
-    if (midClientX != null && midClientY != null && prev > 0) {
+    viewScale = Math.max(0.4, Math.min(8, next));
+    if (midX != null && midY != null && prev > 0) {
       const wrap = canvasWrap.getBoundingClientRect();
-      const cx = midClientX - wrap.left - wrap.width / 2;
-      const cy = midClientY - wrap.top - wrap.height / 2;
+      const cx = midX - wrap.left - wrap.width / 2;
+      const cy = midY - wrap.top - wrap.height / 2;
       viewOffsetX = cx - (cx - viewOffsetX) * (viewScale / prev);
       viewOffsetY = cy - (cy - viewOffsetY) * (viewScale / prev);
     }
     applyViewTransform();
+    draw(); // Handles haben feste Bildschirmgröße -> neu zeichnen
   }
-
   $("zoomIn").addEventListener("click", () => setZoom(viewScale * 1.25));
   $("zoomOut").addEventListener("click", () => setZoom(viewScale / 1.25));
-  $("zoomReset").addEventListener("click", () => fitToView());
+  $("zoomReset").addEventListener("click", () => { fitToView(); draw(); });
   window.addEventListener("resize", () => {
-    if (photoLoaded) { fitScale = computeFitScale(); applyViewTransform(); }
+    if (photoLoaded) { fitScale = computeFitScale(); applyViewTransform(); draw(); }
   });
 
-  // ---------- Canvas ----------
-  function resizeCanvas() {
-    if (!photoLoaded) return;
-    const maxSide = 2000;
-    const scale = Math.min(1, maxSide / Math.max(photo.naturalWidth, photo.naturalHeight));
-    canvas.width = Math.round(photo.naturalWidth * scale);
-    canvas.height = Math.round(photo.naturalHeight * scale);
+  // ---------- Zeichnen ----------
+  function hideEmptyState() { emptyState.hidden = true; emptyState.classList.add("is-hidden"); emptyState.style.display = "none"; }
+
+  // Foto in den Editor übernehmen (verkleinert auf MAX_SIDE)
+  function setBaseFromImage(img) {
+    const nw = img.naturalWidth || img.width, nh = img.naturalHeight || img.height;
+    const s = Math.min(1, MAX_SIDE / Math.max(nw, nh));
+    baseCanvas.width = canvas.width = Math.max(1, Math.round(nw * s));
+    baseCanvas.height = canvas.height = Math.max(1, Math.round(nh * s));
+    baseCanvas.getContext("2d").drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
+    photoLoaded = true;
     canvas.style.display = "block";
     hideEmptyState();
     fitToView();
-    draw();
   }
 
-  function draw() {
-    if (!photoLoaded) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height);
-    drawings.forEach((d) => drawShape(d));
-    measures.forEach((m) => drawMeasure(m));
-    if (activeDrawing && activeDrawing.type !== "move-measure" && activeDrawing.type !== "move-endpoint") {
-      if (activeDrawing.type === "measure") drawMeasurePreview(activeDrawing);
-      else drawShape(activeDrawing);
+  function paint(g, forExport) {
+    const k = K();
+    g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+    g.drawImage(baseCanvas, 0, 0);
+    drawings.forEach((d) => drawShape(g, d, k));
+    measures.forEach((m) => drawMeasure(g, m, k, forExport));
+    if (forExport) return;
+    if (activeDrawing && !/^(move-|text-place)/.test(activeDrawing.type)) {
+      if (activeDrawing.type === "measure") drawMeasurePreview(g, activeDrawing, k);
+      else drawShape(g, activeDrawing, k);
     }
     if (snapPoint) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(snapPoint.x, snapPoint.y, 10, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(0,200,83,0.35)";
-      ctx.fill();
-      ctx.strokeStyle = "#00c853";
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-      ctx.restore();
+      g.save();
+      g.beginPath();
+      g.arc(snapPoint.x, snapPoint.y, scr(12), 0, Math.PI * 2);
+      g.fillStyle = "rgba(0,200,83,0.35)";
+      g.fill();
+      g.strokeStyle = "#00c853";
+      g.lineWidth = scr(2.5);
+      g.stroke();
+      g.restore();
     }
   }
+  function draw() { if (photoLoaded) paint(ctx, false); }
 
-  function drawMeasurePreview(d) {
-    ctx.save();
-    ctx.strokeStyle = d.color || colorInput.value;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.setLineDash([6, 4]);
-    ctx.beginPath();
-    ctx.moveTo(d.x1, d.y1);
-    ctx.lineTo(d.x2, d.y2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
+  function drawMeasurePreview(g, d, k) {
+    g.save();
+    g.strokeStyle = d.color || colorInput.value;
+    g.lineWidth = 3 * k;
+    g.lineCap = "round";
+    g.setLineDash([6 * k, 4 * k]);
+    g.beginPath();
+    g.moveTo(d.x1, d.y1);
+    g.lineTo(d.x2, d.y2);
+    g.stroke();
+    g.restore();
   }
 
-  function drawMeasure(m) {
-    const chosen = m.id === selectedId;
+  function drawMeasure(g, m, k, forExport) {
+    const chosen = !forExport && m.id === selectedId;
     const color = m.color || "#ff3b30";
-    const fs = getFontSize();
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = chosen ? 4 : 3;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(m.x1, m.y1);
-    ctx.lineTo(m.x2, m.y2);
-    ctx.stroke();
+    const fs = getFontSize() * k;
+    g.save();
+    g.strokeStyle = color;
+    g.fillStyle = color;
+    g.lineWidth = (chosen ? 4 : 3) * k;
+    g.lineCap = "round";
+    g.beginPath();
+    g.moveTo(m.x1, m.y1);
+    g.lineTo(m.x2, m.y2);
+    g.stroke();
 
     const angle = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
-    const head = Math.max(9, fs * 0.55);
+    const head = Math.max(9 * k, fs * 0.55);
     [[m.x1, m.y1, angle], [m.x2, m.y2, angle + Math.PI]].forEach(([x, y, a]) => {
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + head * Math.cos(a - 0.45), y + head * Math.sin(a - 0.45));
-      ctx.lineTo(x + head * Math.cos(a + 0.45), y + head * Math.sin(a + 0.45));
-      ctx.closePath();
-      ctx.fill();
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + head * Math.cos(a - 0.45), y + head * Math.sin(a - 0.45));
+      g.lineTo(x + head * Math.cos(a + 0.45), y + head * Math.sin(a + 0.45));
+      g.closePath();
+      g.fill();
     });
 
-    const mx = (m.x1 + m.x2) / 2;
-    const my = (m.y1 + m.y2) / 2;
-    const label = `${m.value || "?"}${m.unit || " mm"}`;
-    ctx.font = `bold ${fs}px system-ui, sans-serif`;
-    const tw = ctx.measureText(label).width;
-    const th = fs + 6;
-    const offset = fs * 0.7;
+    const label = `${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
+    g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
+    const tw = g.measureText(label).width;
+    const th = fs + 6 * k;
+    const offset = fs * 0.75;
     let textAngle = angle;
     if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
-
-    ctx.translate(mx, my);
-    ctx.rotate(textAngle);
-    ctx.fillStyle = "rgba(255,255,255,0.93)";
-    ctx.fillRect(-tw / 2 - 5, -offset - th / 2 - 3, tw + 10, th + 6);
-    ctx.fillStyle = color;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(label, 0, -offset);
-    ctx.restore();
+    g.translate((m.x1 + m.x2) / 2, (m.y1 + m.y2) / 2);
+    g.rotate(textAngle);
+    g.fillStyle = "rgba(255,255,255,0.93)";
+    g.fillRect(-tw / 2 - 5 * k, -offset - th / 2 - 2 * k, tw + 10 * k, th + 4 * k);
+    g.fillStyle = color;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(label, 0, -offset);
+    g.restore();
 
     if (chosen) {
-      ctx.save();
-      ctx.setLineDash([5, 4]);
-      ctx.strokeStyle = "#1682d5";
-      ctx.lineWidth = 1.5;
-      const pad = 10;
-      ctx.strokeRect(
-        Math.min(m.x1, m.x2) - pad,
-        Math.min(m.y1, m.y2) - pad,
-        Math.abs(m.x2 - m.x1) + pad * 2,
-        Math.abs(m.y2 - m.y1) + pad * 2
-      );
-      ctx.setLineDash([]);
-      drawHandle(m.x1, m.y1);
-      drawHandle(m.x2, m.y2);
-      ctx.restore();
+      g.save();
+      g.setLineDash([scr(5), scr(4)]);
+      g.strokeStyle = "#1682d5";
+      g.lineWidth = scr(1.5);
+      const pad = scr(10);
+      g.strokeRect(Math.min(m.x1, m.x2) - pad, Math.min(m.y1, m.y2) - pad, Math.abs(m.x2 - m.x1) + pad * 2, Math.abs(m.y2 - m.y1) + pad * 2);
+      g.setLineDash([]);
+      drawHandle(g, m.x1, m.y1);
+      drawHandle(g, m.x2, m.y2);
+      g.restore();
     }
   }
 
-  function drawHandle(x, y) {
-    // Äußerer Ring (leicht zu treffen)
-    ctx.beginPath();
-    ctx.arc(x, y, HANDLE_R, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(22, 130, 213, 0.25)";
-    ctx.fill();
-    ctx.strokeStyle = "#1682d5";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    // Innerer Punkt
-    ctx.beginPath();
-    ctx.arc(x, y, 7, 0, Math.PI * 2);
-    ctx.fillStyle = "#fff";
-    ctx.fill();
-    ctx.strokeStyle = "#1682d5";
-    ctx.lineWidth = 2;
-    ctx.stroke();
+  function drawHandle(g, x, y) {
+    g.beginPath();
+    g.arc(x, y, scr(15), 0, Math.PI * 2);
+    g.fillStyle = "rgba(22, 130, 213, 0.25)";
+    g.fill();
+    g.strokeStyle = "#1682d5";
+    g.lineWidth = scr(2.5);
+    g.stroke();
+    g.beginPath();
+    g.arc(x, y, scr(5), 0, Math.PI * 2);
+    g.fillStyle = "#fff";
+    g.fill();
+    g.lineWidth = scr(1.5);
+    g.stroke();
   }
 
-  function drawShape(d) {
+  function drawShape(g, d, k) {
     if (!d) return;
-    ctx.save();
-    ctx.strokeStyle = d.color || colorInput.value;
-    ctx.fillStyle = d.color || colorInput.value;
-    ctx.lineWidth = d.width || 4;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    g.save();
+    g.strokeStyle = d.color || colorInput.value;
+    g.fillStyle = d.color || colorInput.value;
+    g.lineWidth = (d.width || 4) * k;
+    g.lineCap = "round";
+    g.lineJoin = "round";
     if (d.type === "freehand") {
-      if (!d.points || d.points.length < 2) { ctx.restore(); return; }
-      ctx.beginPath();
-      ctx.moveTo(d.points[0].x, d.points[0].y);
-      for (let i = 1; i < d.points.length; i++) ctx.lineTo(d.points[i].x, d.points[i].y);
-      ctx.stroke();
+      const pts = d.points;
+      if (pts && pts.length > 1) {
+        g.beginPath();
+        g.moveTo(pts[0].x, pts[0].y);
+        // sanfte Kurve durch die Mittelpunkte
+        for (let i = 1; i < pts.length - 1; i++) {
+          g.quadraticCurveTo(pts[i].x, pts[i].y, (pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2);
+        }
+        g.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+        g.stroke();
+      }
     } else if (d.type === "line") {
-      ctx.beginPath();
-      ctx.moveTo(d.x1, d.y1);
-      ctx.lineTo(d.x2, d.y2);
-      ctx.stroke();
+      g.beginPath();
+      g.moveTo(d.x1, d.y1);
+      g.lineTo(d.x2, d.y2);
+      g.stroke();
     } else if (d.type === "rect") {
-      ctx.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
+      g.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
     } else if (d.type === "text") {
-      const fs = d.fontSize || getFontSize() + 4;
-      ctx.font = `bold ${fs}px system-ui, sans-serif`;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
-      ctx.fillText(d.text || "Notiz", d.x1, d.y1);
+      g.font = `bold ${(d.fontSize || getFontSize() + 4) * k}px system-ui, -apple-system, sans-serif`;
+      g.textAlign = "left";
+      g.textBaseline = "alphabetic";
+      g.fillText(d.text || "Notiz", d.x1, d.y1);
     }
-    ctx.restore();
+    g.restore();
   }
 
   // ---------- Koordinaten ----------
-  function pointFromEvent(e) {
+  function pointFromClient(clientX, clientY) {
     const wrap = canvasWrap.getBoundingClientRect();
-    const totalScale = fitScale * viewScale;
-    const cx = wrap.left + wrap.width / 2;
-    const cy = wrap.top + wrap.height / 2;
-    const sx = e.clientX - cx - viewOffsetX;
-    const sy = e.clientY - cy - viewOffsetY;
+    const ts = totalScale();
     return {
-      x: sx / totalScale + canvas.width / 2,
-      y: sy / totalScale + canvas.height / 2
+      x: (clientX - (wrap.left + wrap.width / 2) - viewOffsetX) / ts + canvas.width / 2,
+      y: (clientY - (wrap.top + wrap.height / 2) - viewOffsetY) / ts + canvas.height / 2
     };
   }
+  const pointWithCrosshair = (e) => pointFromClient(e.clientX, e.clientY + (crosshairToggle.checked ? CROSSHAIR_OFFSET_Y : 0));
 
   function updateCrosshair(clientX, clientY) {
-    if (!crosshairToggle.checked || !photoLoaded || multiTouchMode) {
-      crosshairEl.hidden = true;
-      return;
-    }
+    if (!crosshairToggle.checked || !photoLoaded || multiTouchMode) { crosshairEl.hidden = true; return; }
     const wrap = canvasWrap.getBoundingClientRect();
     crosshairEl.hidden = false;
     crosshairEl.style.left = (clientX - wrap.left) + "px";
     crosshairEl.style.top = (clientY - wrap.top + CROSSHAIR_OFFSET_Y) + "px";
   }
+  const hideCrosshair = () => { crosshairEl.hidden = true; };
 
-  function hideCrosshair() {
-    crosshairEl.hidden = true;
-  }
-
-  function pointWithCrosshair(e) {
-    if (!crosshairToggle.checked) return pointFromEvent(e);
-    return pointFromEvent({ clientX: e.clientX, clientY: e.clientY + CROSSHAIR_OFFSET_Y });
-  }
-
-  function dist(a, b) {
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  }
-
+  // ---------- Treffer ----------
   function distanceToSegment(p, x1, y1, x2, y2) {
-    const dx = x2 - x1, dy = y2 - y1;
-    const len2 = dx * dx + dy * dy;
+    const dx = x2 - x1, dy = y2 - y1, len2 = dx * dx + dy * dy;
     const t = len2 ? Math.max(0, Math.min(1, ((p.x - x1) * dx + (p.y - y1) * dy) / len2)) : 0;
     return Math.hypot(p.x - (x1 + t * dx), p.y - (y1 + t * dy));
   }
 
   function findSnap(p, excludeId) {
     if (!snapToggle.checked) return null;
-    let best = null, bestDist = SNAP_DIST;
+    let best = null, bestDist = scr(22);
     measures.forEach((m) => {
       if (excludeId && m.id === excludeId) return;
       [{ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }].forEach((c) => {
-        const d = Math.hypot(p.x - c.x, p.y - c.y);
+        const d = dist(p, c);
         if (d < bestDist) { bestDist = d; best = c; }
       });
     });
@@ -555,44 +355,39 @@
   }
 
   function hitMeasure(p) {
-    const tol = HANDLE_R + 14;
-    // Zuerst ALLE Endpunkte (leichter greifbar)
-    for (let i = measures.length - 1; i >= 0; i--) {
+    const endTol = scr(26), lineTol = scr(20);
+    for (let i = measures.length - 1; i >= 0; i--) { // Endpunkte zuerst
       const m = measures[i];
-      if (dist(p, { x: m.x1, y: m.y1 }) < tol) return { measure: m, endpoint: 1 };
-      if (dist(p, { x: m.x2, y: m.y2 }) < tol) return { measure: m, endpoint: 2 };
+      if (dist(p, { x: m.x1, y: m.y1 }) < endTol) return { measure: m, endpoint: 1 };
+      if (dist(p, { x: m.x2, y: m.y2 }) < endTol) return { measure: m, endpoint: 2 };
     }
-    // Dann Liniensegmente
     for (let i = measures.length - 1; i >= 0; i--) {
       const m = measures[i];
-      if (distanceToSegment(p, m.x1, m.y1, m.x2, m.y2) < HIT_TOLERANCE) {
-        return { measure: m, endpoint: 0 };
-      }
+      if (distanceToSegment(p, m.x1, m.y1, m.x2, m.y2) < lineTol) return { measure: m, endpoint: 0 };
     }
     return null;
   }
 
   function hitDrawing(p) {
+    const tol = scr(20), k = K();
     for (let i = drawings.length - 1; i >= 0; i--) {
       const d = drawings[i];
       if (d.type === "freehand" && d.points) {
         for (let j = 0; j < d.points.length - 1; j++) {
-          if (distanceToSegment(p, d.points[j].x, d.points[j].y, d.points[j + 1].x, d.points[j + 1].y) < HIT_TOLERANCE) return i;
+          if (distanceToSegment(p, d.points[j].x, d.points[j].y, d.points[j + 1].x, d.points[j + 1].y) < tol) return i;
         }
       } else if (d.type === "line") {
-        if (distanceToSegment(p, d.x1, d.y1, d.x2, d.y2) < HIT_TOLERANCE) return i;
+        if (distanceToSegment(p, d.x1, d.y1, d.x2, d.y2) < tol) return i;
       } else if (d.type === "rect") {
-        const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2);
-        const x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
-        const near =
-          (p.x >= x1 - 8 && p.x <= x2 + 8 && (Math.abs(p.y - y1) < 12 || Math.abs(p.y - y2) < 12)) ||
-          (p.y >= y1 - 8 && p.y <= y2 + 8 && (Math.abs(p.x - x1) < 12 || Math.abs(p.x - x2) < 12));
+        const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2), x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
+        const near = (p.x >= x1 - tol && p.x <= x2 + tol && (Math.abs(p.y - y1) < tol || Math.abs(p.y - y2) < tol)) ||
+                     (p.y >= y1 - tol && p.y <= y2 + tol && (Math.abs(p.x - x1) < tol || Math.abs(p.x - x2) < tol));
         if (near) return i;
       } else if (d.type === "text") {
-        const fs = d.fontSize || getFontSize() + 4;
+        const fs = (d.fontSize || getFontSize() + 4) * k;
         ctx.font = `bold ${fs}px system-ui, sans-serif`;
         const tw = ctx.measureText(d.text || "Notiz").width;
-        if (p.x >= d.x1 - 4 && p.x <= d.x1 + tw + 4 && p.y >= d.y1 - fs && p.y <= d.y1 + 6) return i;
+        if (p.x >= d.x1 - tol && p.x <= d.x1 + tw + tol && p.y >= d.y1 - fs - tol && p.y <= d.y1 + tol) return i;
       }
     }
     return -1;
@@ -612,33 +407,36 @@
     measures.forEach((m, index) => {
       const row = document.createElement("div");
       row.className = "measure-item" + (m.id === selectedId ? " selected" : "");
+
       const title = document.createElement("button");
       title.type = "button";
       title.className = "secondary";
       title.textContent = `Maß ${index + 1}`;
-      title.addEventListener("click", () => {
-        selectedId = m.id;
-        setTool("select");
-        renderMeasureList();
-        draw();
-      });
+      title.addEventListener("click", () => { selectedId = m.id; setTool("select"); renderMeasureList(); draw(); });
+
       const input = document.createElement("input");
       input.type = "text";
       input.inputMode = "decimal";
       input.placeholder = "Wert";
-      input.value = m.value ?? "";
+      input.value = fmt(m.value);
       input.addEventListener("change", () => {
         remember();
-        m.value = input.value.replace(/,/g, ".").replace(/[^\d.]/g, "");
-        input.value = m.value;
-        draw();
+        const p = speech.parseNumber(input.value, { typed: true });
+        m.value = p.value;
+        if (p.unit) m.unit = p.unit;
+        refresh();
       });
-      // Kein automatisches Öffnen bei Fokus – nur tippen in der Liste oder 🎤
+
+      const unit = document.createElement("span");
+      unit.className = "unit-label";
+      unit.textContent = (m.unit || " mm").trim();
+
       const mic = document.createElement("button");
       mic.type = "button";
       mic.className = "mic-btn";
       mic.textContent = "🎤";
-      mic.addEventListener("click", () => openValueDialog(m.id, true));
+      mic.addEventListener("click", () => openValueDialog(m.id, { mic: true }));
+
       const del = document.createElement("button");
       del.type = "button";
       del.className = "danger delete-measure";
@@ -647,299 +445,286 @@
         remember();
         measures = measures.filter((x) => x.id !== m.id);
         if (selectedId === m.id) selectedId = null;
-        renderMeasureList();
-        draw();
+        refresh();
       });
-      row.append(title, input, mic, del);
+
+      row.append(title, input, unit, mic, del);
       list.append(row);
     });
   }
 
   function setTool(name) {
     tool = name;
-    document.querySelectorAll(".tool").forEach((b) => {
-      b.classList.toggle("active", b.dataset.tool === tool);
-    });
+    document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
   }
 
-  // ---------- Foto ----------
+  // ---------- Foto laden ----------
+  function resetState() {
+    measures = []; drawings = []; history = []; selectedId = null; nextId = 1; snapPoint = null;
+    activeDrawing = null; buttons.undo.disabled = true;
+  }
+
   function loadImageFile(file) {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
+    if (!file.type.startsWith("image/") && !/\.(jpe?g|png|heic|heif|webp)$/i.test(file.name || "")) {
       alert("Bitte eine Bilddatei wählen.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      photoData = reader.result;
-      photo = new Image();
-      photo.onload = () => {
-        photoLoaded = true;
-        $("photoStatus").textContent = file.name || "Foto geladen";
-        measures = [];
-        drawings = [];
-        history = [];
-        selectedId = null;
-        nextId = 1;
-        snapPoint = null;
-        resizeCanvas();
-        renderMeasureList();
-        setReady(true);
-        $("saveStatus").textContent = "Foto geladen.";
-      };
-      photo.onerror = () => alert("Bild konnte nicht geladen werden.");
-      photo.src = photoData;
+    if (!confirmReplace()) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resetState();
+      originalBlob = file;
+      setBaseFromImage(img);
+      photoData = baseCanvas.toDataURL("image/jpeg", 0.9);
+      $("photoStatus").textContent = file.name || "Foto geladen";
+      refresh();
+      setReady(true);
+      setStatus("Foto geladen. Maßlinie ziehen – danach öffnet sich das Wert-Feld.");
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => { URL.revokeObjectURL(url); alert("Bild konnte nicht geladen werden (Format?)."); };
+    img.src = url;
+  }
+  $("photoCamera").addEventListener("change", (e) => { loadImageFile(e.target.files && e.target.files[0]); e.target.value = ""; });
+  $("photoGallery").addEventListener("change", (e) => { loadImageFile(e.target.files && e.target.files[0]); e.target.value = ""; });
+
+  // ---------- Projekt ----------
+  const projectBaseName = () => ($("projectName").value.trim() || "fotomass").replace(/[^\p{L}\p{N}\-_]+/gu, "_").replace(/^_+|_+$/g, "") || "fotomass";
+
+  function makeThumb() {
+    const c = document.createElement("canvas");
+    const s = 220 / Math.max(canvas.width, canvas.height);
+    const full = document.createElement("canvas");
+    full.width = canvas.width; full.height = canvas.height;
+    paint(full.getContext("2d"), true);
+    c.width = Math.round(canvas.width * s); c.height = Math.round(canvas.height * s);
+    c.getContext("2d").drawImage(full, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.6);
   }
 
-  $("photoCamera").addEventListener("change", (e) => {
-    loadImageFile(e.target.files && e.target.files[0]);
-    e.target.value = "";
-  });
-  $("photoGallery").addEventListener("change", (e) => {
-    loadImageFile(e.target.files && e.target.files[0]);
-    e.target.value = "";
-  });
-
-  // ---------- Buttons ----------
-  buttons.undo.addEventListener("click", () => {
-    const last = history.pop();
-    if (!last) return;
-    const state = JSON.parse(last);
-    measures = state.measures;
-    drawings = state.drawings;
-    selectedId = state.selectedId;
-    nextId = state.nextId || nextId;
-    snapPoint = null;
-    renderMeasureList();
-    draw();
-    buttons.undo.disabled = history.length === 0;
-  });
-
-  buttons.clear.addEventListener("click", () => {
-    if (!confirm("Alle Maßlinien und Zeichnungen löschen?")) return;
-    remember();
-    measures = [];
-    drawings = [];
-    selectedId = null;
-    snapPoint = null;
-    renderMeasureList();
-    draw();
-  });
-
-  function projectFileName() {
-    return ($("projectName").value.trim() || "fotomass")
-      .replace(/[^\w\-äöüÄÖÜß]+/g, "_") || "fotomass";
-  }
-
-  function buildProjectPayload() {
+  function buildPayload(withThumb) {
     return {
-      version: 7,
-      app: "FotoMaß",
+      version: 8, app: "FotoMaß",
       projectName: $("projectName").value,
-      photoData,
-      measures,
-      drawings,
-      nextId,
-      unit: unitSelect.value,
-      snap: snapToggle.checked,
-      fontSize: getFontSize(),
+      photoData, measures, drawings, nextId,
+      unit: unitSelect.value, snap: snapToggle.checked, fontSize: getFontSize(),
+      thumb: withThumb ? makeThumb() : undefined,
       savedAt: new Date().toISOString()
     };
   }
 
-  function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2500);
-  }
-
-  function applyProjectData(data, showFeedback) {
-    if (!data || !data.photoData) {
-      if (showFeedback) $("saveStatus").textContent = "Daten unvollständig (kein Foto).";
-      return;
-    }
-    photoData = data.photoData;
-    photo = new Image();
-    photo.onload = () => {
-      photoLoaded = true;
+  function applyProjectData(raw, feedback) {
+    const data = storage.sanitizeProject(raw);
+    if (!data) { if (feedback) setStatus("Ungültige oder unvollständige Projekt-Datei."); return; }
+    const img = new Image();
+    img.onload = () => {
+      resetState();
+      originalBlob = null;
+      setBaseFromImage(img);
+      // Alte Projekte enthielten das volle Foto -> auf Editorgröße verkleinern
+      const sameSize = (img.naturalWidth || img.width) === canvas.width;
+      photoData = sameSize ? data.photoData : baseCanvas.toDataURL("image/jpeg", 0.9);
+      measures = data.measures; drawings = data.drawings; nextId = Math.max(data.nextId, 1 + Math.max(0, ...measures.map((m) => m.id), ...drawings.map((d) => d.id)));
+      $("projectName").value = data.projectName;
       $("photoStatus").textContent = data.projectName || "Projekt geladen";
-      $("projectName").value = data.projectName || "";
-      measures = data.measures || [];
-      drawings = data.drawings || [];
-      nextId = data.nextId || 1;
-      selectedId = null;
-      history = [];
-      snapPoint = null;
-      if (data.unit) unitSelect.value = data.unit;
-      if (typeof data.snap === "boolean") snapToggle.checked = data.snap;
-      if (data.fontSize) fontSizeInput.value = data.fontSize;
-      resizeCanvas();
-      renderMeasureList();
-      setReady(true);
-      if (showFeedback) {
-        const when = data.savedAt ? new Date(data.savedAt).toLocaleString("de-DE") : "";
-        $("saveStatus").textContent = "Projekt geladen" + (when ? " (" + when + ")" : "") + ".";
-      }
+      unitSelect.value = data.unit; snapToggle.checked = data.snap; fontSizeInput.value = data.fontSize;
+      renderMeasureList(); draw(); setReady(true);
+      if (feedback) setStatus("Projekt geladen" + (data.savedAt ? " (" + new Date(data.savedAt).toLocaleString("de-DE") + ")" : "") + ".");
     };
-    photo.onerror = () => {
-      if (showFeedback) $("saveStatus").textContent = "Foto in der Datei nicht ladbar.";
-    };
-    photo.src = photoData;
+    img.onerror = () => { if (feedback) setStatus("Foto in der Datei nicht ladbar."); };
+    img.src = data.photoData;
   }
 
-  function loadProject(showFeedback) {
-    try {
-      const raw = localStorage.getItem("fotomass-project");
-      if (!raw) {
-        if (showFeedback) $("saveStatus").textContent = "Kein Browser-Projekt gefunden.";
-        return;
-      }
-      applyProjectData(JSON.parse(raw), showFeedback);
-    } catch (_) {
-      if (showFeedback) $("saveStatus").textContent = "Laden fehlgeschlagen.";
-    }
-  }
-
-  // Bild speichern → Teilen/Galerie wenn möglich, sonst Download
-  buttons.export.addEventListener("click", async () => {
+  // Zwischenspeicher (überlebt Neuladen z. B. nach der Kamera)
+  let autosaveTimer = null;
+  function scheduleAutosave() {
     if (!photoLoaded) return;
-    const name = projectFileName() + ".png";
-    $("saveStatus").textContent = "Bild wird vorbereitet …";
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(flushAutosave, 700);
+  }
+  async function flushAutosave() {
+    clearTimeout(autosaveTimer);
+    if (!photoLoaded || !photoData) return;
+    try { await storage.put(storage.AUTOSAVE_KEY, buildPayload(false)); } catch (_) {}
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAutosave(); });
+  window.addEventListener("pagehide", flushAutosave);
+
+  // Im Browser speichern (mehrere Projekte)
+  buttons.save.addEventListener("click", async () => {
+    if (!photoLoaded) return;
+    if (!$("projectName").value.trim()) $("projectName").value = "Projekt " + new Date().toLocaleDateString("de-DE");
     try {
-      const blob = await new Promise((resolve, reject) => {
-        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob"))), "image/png");
+      const payload = buildPayload(true);
+      await storage.put(payload.projectName.trim(), payload);
+      setStatus("Im Browser gespeichert: „" + payload.projectName.trim() + "“ (" + new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) + "). Für ein Backup zusätzlich „In Dateien sichern“.");
+    } catch (_) {
+      setStatus("Browser-Speicher nicht verfügbar – bitte „In Dateien sichern“ nutzen.");
+    }
+  });
+
+  async function openProjectsDialog() {
+    const box = $("projectsList");
+    box.replaceChildren();
+    let items = [];
+    try { items = await storage.list(); } catch (_) {}
+    if (!items.length) {
+      const p = document.createElement("p");
+      p.className = "empty-list";
+      p.textContent = "Noch keine Projekte im Browser gespeichert.";
+      box.append(p);
+    }
+    items.forEach((it) => {
+      const row = document.createElement("div");
+      row.className = "project-row";
+      if (it.thumb && it.thumb.startsWith("data:image/")) {
+        const im = document.createElement("img");
+        im.src = it.thumb; im.alt = "";
+        row.append(im);
+      }
+      const info = document.createElement("div");
+      info.className = "project-info";
+      const n = document.createElement("strong"); n.textContent = it.name;
+      const d = document.createElement("small"); d.textContent = it.savedAt ? new Date(it.savedAt).toLocaleString("de-DE") : "";
+      info.append(n, d);
+      const open = document.createElement("button");
+      open.type = "button"; open.textContent = "Öffnen";
+      open.addEventListener("click", async () => {
+        if (!confirmReplace()) return;
+        const data = await storage.get(it.key);
+        closeDialog(projectsDialog);
+        applyProjectData(data, true);
       });
-      const file = new File([blob], name, { type: "image/png" });
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "danger delete-measure"; del.textContent = "✕";
+      del.addEventListener("click", async () => {
+        if (!confirm("Projekt „" + it.name + "“ aus dem Browser löschen?")) return;
+        await storage.del(it.key);
+        openProjectsDialog();
+      });
+      row.append(info, open, del);
+      box.append(row);
+    });
+    showDialog(projectsDialog);
+  }
+  buttons.load.addEventListener("click", openProjectsDialog);
+  $("projectsClose").addEventListener("click", () => closeDialog(projectsDialog));
 
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: projectFileName(),
-            text: "FotoMaß Aufmaß"
-          });
-          $("saveStatus").textContent = "Bild geteilt – im Menü „Bild speichern“ / Galerie wählen.";
-          return;
-        } catch (err) {
-          if (err && err.name === "AbortError") {
-            $("saveStatus").textContent = "Teilen abgebrochen.";
-            return;
-          }
-        }
-      }
-
-      downloadBlob(blob, name);
-      $("saveStatus").textContent = "Bild in Downloads gespeichert.";
-    } catch (_) {
-      try {
-        const a = document.createElement("a");
-        a.download = name;
-        a.href = canvas.toDataURL("image/png");
-        a.click();
-        $("saveStatus").textContent = "Bild als PNG exportiert.";
-      } catch (e2) {
-        $("saveStatus").textContent = "Bild-Export fehlgeschlagen.";
-      }
-    }
-  });
-
-  // Projekt als Datei
-  buttons.exportProject.addEventListener("click", () => {
+  // Projekt-Datei (Dateien-App)
+  buttons.exportProject.addEventListener("click", async () => {
     if (!photoLoaded) return;
     try {
-      const json = JSON.stringify(buildProjectPayload());
-      const blob = new Blob([json], { type: "application/json" });
-      downloadBlob(blob, projectFileName() + ".fotomass.json");
-      $("saveStatus").textContent = "Projekt-Datei gespeichert. Später mit „Datei laden“ öffnen.";
+      const r = await storage.saveProjectFile(buildPayload(false), projectBaseName());
+      setStatus({
+        shared: "Im Teilen-Menü „In Dateien sichern“ wählen – dann ist die Projekt-Datei abgelegt. Später mit „Projekt-Datei öffnen“ weiterbearbeiten.",
+        downloaded: "Projekt-Datei wurde heruntergeladen (Ordner „Downloads“). Später mit „Projekt-Datei öffnen“ weiterbearbeiten.",
+        cancelled: "Abgebrochen."
+      }[r] || "Gesichert.");
     } catch (_) {
-      $("saveStatus").textContent = "Projekt-Datei fehlgeschlagen (evtl. Foto zu groß).";
+      setStatus("Projekt-Datei konnte nicht erstellt werden.");
     }
   });
 
-  buttons.save.addEventListener("click", () => {
-    if (!photoLoaded) return;
-    try {
-      localStorage.setItem("fotomass-project", JSON.stringify(buildProjectPayload()));
-      $("saveStatus").textContent = "Im Browser gespeichert (" + new Date().toLocaleString("de-DE") + ").";
-    } catch (_) {
-      $("saveStatus").textContent = "Browser-Speicher voll – Projekt-Datei oder Bild nutzen.";
-    }
-  });
-
-  buttons.load.addEventListener("click", () => loadProject(true));
-
-  buttons.importProject.addEventListener("click", () => {
-    $("projectFileInput").click();
-  });
+  buttons.importProject.addEventListener("click", () => $("projectFileInput").click());
   $("projectFileInput").addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
+    if (!confirmReplace()) return;
     const reader = new FileReader();
     reader.onload = () => {
-      try {
-        applyProjectData(JSON.parse(reader.result), true);
-      } catch (_) {
-        $("saveStatus").textContent = "Ungültige Projekt-Datei.";
-      }
+      try { applyProjectData(JSON.parse(reader.result), true); }
+      catch (_) { setStatus("Ungültige Projekt-Datei."); }
     };
-    reader.onerror = () => {
-      $("saveStatus").textContent = "Datei konnte nicht gelesen werden.";
-    };
+    reader.onerror = () => setStatus("Datei konnte nicht gelesen werden.");
     reader.readAsText(file);
   });
 
-  $("styleToggle").addEventListener("click", () => {
-    document.body.classList.toggle("site-bold");
-    $("styleToggle").textContent = document.body.classList.contains("site-bold") ? "Technisch" : "Baustellenstil";
+  // ---------- Export: zwei Fotos (Original + mit Maßen) ----------
+  const extFor = (type) => ({ "image/jpeg": "jpg", "image/png": "png", "image/heic": "heic", "image/heif": "heif", "image/webp": "webp" }[type] || "jpg");
+
+  function renderAnnotatedBlob() {
+    const c = document.createElement("canvas");
+    c.width = canvas.width; c.height = canvas.height;
+    paint(c.getContext("2d"), true); // ohne Auswahl-Rahmen, Griffe und Einrast-Punkt
+    return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob"))), "image/png"));
+  }
+
+  function clearExportUrls() { exportUrls.forEach((u) => URL.revokeObjectURL(u)); exportUrls = []; }
+
+  buttons.export.addEventListener("click", async () => {
+    if (!photoLoaded) return;
+    setStatus("Bilder werden vorbereitet …");
+    try {
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const base = `${projectBaseName()}_${stamp}`;
+      const annotated = await renderAnnotatedBlob();
+      const original = originalBlob || await (await fetch(photoData)).blob();
+      const otype = original.type || "image/jpeg";
+      exportFiles = [
+        new File([original], `${base}_Original.${extFor(otype)}`, { type: otype }),
+        new File([annotated], `${base}_Masse.png`, { type: "image/png" })
+      ];
+      clearExportUrls();
+      exportUrls = exportFiles.map((f) => URL.createObjectURL(f));
+      $("prevOriginal").src = exportUrls[0];
+      $("prevAnnotated").src = exportUrls[1];
+      $("saveDialogHint").textContent = storage.canShareFiles(exportFiles)
+        ? "Tippen, dann im Menü „2 Bilder sichern“ wählen. Alternativ ein Bild lange drücken › „Zu Fotos hinzufügen“."
+        : "Teilen wird hier nicht unterstützt: Bild lange drücken › „Zu Fotos hinzufügen“ oder „Als Dateien laden“.";
+      showDialog(saveDialog);
+      setStatus("");
+    } catch (_) {
+      setStatus("Bild-Export fehlgeschlagen.");
+    }
   });
 
-  colorInput.addEventListener("change", () => {
-    if (selectedId === null) return;
-    const m = measures.find((x) => x.id === selectedId);
-    if (m) { remember(); m.color = colorInput.value; draw(); }
+  // Direkt im Klick: kein await davor, sonst verweigert iOS das Teilen-Menü
+  $("saveShare").addEventListener("click", async () => {
+    if (!exportFiles) return;
+    const hint = $("saveDialogHint");
+    const r = await storage.shareFiles(exportFiles, "FotoMaß");
+    if (r === "shared") hint.textContent = "✓ Geteilt. Wenn „2 Bilder sichern“ gewählt wurde, liegen beide Fotos jetzt in der Galerie.";
+    else if (r === "cancelled") hint.textContent = "Abgebrochen – nochmal tippen oder Bild lange drücken.";
+    else if (r === "unsupported") hint.textContent = "Teilen nicht möglich: Bild lange drücken › „Zu Fotos hinzufügen“ oder „Als Dateien laden“.";
+    else hint.textContent = "Teilen fehlgeschlagen – nochmal tippen oder Bild lange drücken › „Zu Fotos hinzufügen“.";
   });
-  unitSelect.addEventListener("change", () => {
-    if (selectedId === null) return;
-    const m = measures.find((x) => x.id === selectedId);
-    if (m) { remember(); m.unit = unitSelect.value; draw(); renderMeasureList(); }
+  $("saveDownload").addEventListener("click", () => {
+    if (!exportFiles) return;
+    exportFiles.forEach((f, i) => setTimeout(() => storage.downloadBlob(f, f.name), i * 500));
+    $("saveDialogHint").textContent = "Beide Dateien wurden geladen (Ordner „Downloads“).";
   });
-  fontSizeInput.addEventListener("input", () => draw());
-  document.querySelectorAll(".tool").forEach((b) => {
-    b.addEventListener("click", () => setTool(b.dataset.tool));
-  });
+  $("saveClose").addEventListener("click", () => { closeDialog(saveDialog); clearExportUrls(); exportFiles = null; });
 
-  // ---------- Dialoge ----------
+  // ---------- Allgemeine Dialog-Helfer ----------
+  let lastDialogOpen = 0;
+  function showDialog(el) { lastDialogOpen = Date.now(); el.hidden = false; }
+  function closeDialog(el) { el.hidden = true; }
+  // Das „Nachklick“-Ereignis eines Tipps darf nicht den gerade geöffneten Dialog bedienen
+  document.addEventListener("click", (e) => {
+    if (e.isTrusted && Date.now() - lastDialogOpen < 350 && e.target.closest && e.target.closest(".dialog")) {
+      e.stopPropagation(); e.preventDefault();
+    }
+  }, true);
+
+  // ---------- Text-Dialog ----------
   function openTextDialog(point) {
     pendingTextPoint = point;
     textDialogInput.value = "";
-    textDialog.hidden = false;
-    setTimeout(() => textDialogInput.focus(), 50);
+    showDialog(textDialog);
+    pendingFocus = "text";
+    setTimeout(() => textDialogInput.focus(), 60);
   }
-  function closeTextDialog() {
-    textDialog.hidden = true;
-    pendingTextPoint = null;
-  }
+  function closeTextDialog() { closeDialog(textDialog); pendingTextPoint = null; }
   $("textDialogCancel").addEventListener("click", closeTextDialog);
   $("textDialogOk").addEventListener("click", () => {
     const txt = textDialogInput.value.trim();
     if (txt && pendingTextPoint) {
       remember();
-      drawings.push({
-        id: nextId++, type: "text",
-        x1: pendingTextPoint.x, y1: pendingTextPoint.y,
-        text: txt, color: colorInput.value,
-        width: Number(widthInput.value), fontSize: getFontSize() + 4
-      });
-      draw();
+      drawings.push({ id: nextId++, type: "text", x1: pendingTextPoint.x, y1: pendingTextPoint.y, text: txt, color: colorInput.value, width: Number(widthInput.value), fontSize: getFontSize() + 4 });
+      refresh();
     }
     closeTextDialog();
   });
@@ -948,100 +733,237 @@
     if (e.key === "Escape") closeTextDialog();
   });
 
-  function openValueDialog(measureId, startMic) {
-    stopSpeech();
-    editingMeasureId = measureId;
-    const m = measures.find((x) => x.id === measureId);
-    valueDialogInput.value = m ? (m.value || "") : "";
-    valueDialogHint.textContent = SpeechAPI
-      ? "Zahl tippen oder 🎤 antippen"
-      : "Sprache nicht verfügbar – bitte tippen.";
-    valueDialog.hidden = false;
-    // Sprache SOFORT starten (User-Gesture darf nicht durch setTimeout unterbrochen werden)
-    if (startMic) {
-      speakNumber();
-    }
-    setTimeout(() => {
-      try { valueDialogInput.focus(); } catch (_) {}
-    }, 80);
+  // ---------- Wert-Dialog (Tippen + Sprache) ----------
+  const dlg = { id: null, isNew: false, listener: null, confirmTimer: null };
+  try {
+    optAutoConfirm.checked = localStorage.getItem("fm-autoconfirm") !== "0";
+    optAutoMic.checked = localStorage.getItem("fm-automic") === "1";
+  } catch (_) {}
+  optAutoConfirm.addEventListener("change", () => { try { localStorage.setItem("fm-autoconfirm", optAutoConfirm.checked ? "1" : "0"); } catch (_) {} });
+  optAutoMic.addEventListener("change", () => { try { localStorage.setItem("fm-automic", optAutoMic.checked ? "1" : "0"); } catch (_) {} });
+
+  function stopSpeech() {
+    clearTimeout(dlg.confirmTimer);
+    if (dlg.listener) { dlg.listener.stop(); dlg.listener = null; }
+    vMic.classList.remove("listening");
   }
+
+  function startSpeech() {
+    stopSpeech();
+    vMic.classList.add("listening");
+    const handlers = {
+      onStatus: (t) => { vHint.textContent = t; },
+      onResult: (r) => {
+        vInput.value = fmt(r.value);
+        if (r.unit) vUnit.value = r.unit;
+        if (!r.final) { vHint.textContent = "… " + fmt(r.value) + (r.unit || ""); return; }
+        if (optAutoConfirm.checked) {
+          vHint.textContent = "✓ " + fmt(r.value) + vUnit.value + " – wird übernommen … (Antippen zum Ändern)";
+          clearTimeout(dlg.confirmTimer);
+          dlg.confirmTimer = setTimeout(() => $("valueDialogOk").click(), 1100);
+        } else {
+          vHint.textContent = "Erkannt: " + fmt(r.value) + vUnit.value + " – „Übernehmen“ oder sagen: „OK“.";
+        }
+      },
+      onCommand: (cmd) => {
+        if (cmd === "confirm") { if (vInput.value) $("valueDialogOk").click(); else vHint.textContent = "Erst ein Maß sagen."; }
+        else if (cmd === "cancel") closeValueDialog();
+        else if (cmd === "clear") { vInput.value = ""; vHint.textContent = "Gelöscht – nochmal sprechen."; setTimeout(startSpeech, 200); }
+      },
+      onEnd: () => { vMic.classList.remove("listening"); dlg.listener = null; }
+    };
+    dlg.listener = speech.listen(handlers);
+    if (!dlg.listener) vMic.classList.remove("listening");
+  }
+
+  function openValueDialog(measureId, opts = {}) {
+    stopSpeech();
+    const m = measures.find((x) => x.id === measureId);
+    if (!m) return;
+    dlg.id = measureId;
+    dlg.isNew = !!opts.isNew;
+    $("valueDialogTitle").textContent = `Maß ${measures.indexOf(m) + 1} – Wert`;
+    vInput.value = fmt(m.value);
+    vUnit.value = m.unit || " mm";
+    vInput.inputMode = "decimal";
+    $("keyboardToggle").textContent = "⌨ Text-Tastatur (für iPhone-Diktat)";
+    const st = speech.status();
+    vHint.textContent = !st.ok ? st.reason
+      : st.standalone ? "Zahl tippen. Hinweis: Als Home-Bildschirm-App geht Sprache am iPhone oft nicht – dann in Safari öffnen oder ⌨ nutzen."
+      : "Zahl tippen oder 🎤 antippen";
+    showDialog(valueDialog);
+    const wantMic = opts.mic || (optAutoMic.checked && st.ok);
+    if (wantMic) {
+      startSpeech(); // direkt im Tipp, damit iOS das Mikrofon freigibt
+    } else {
+      // Fokus sofort (Tastatur) und – falls iOS das hier ablehnt – nochmal beim touchend desselben Tipps
+      try { vInput.focus(); vInput.select(); } catch (_) {}
+      if (opts.fromPointer) pendingFocus = "value";
+      setTimeout(() => { if (!valueDialog.hidden && document.activeElement !== vInput && !dlg.listener) { try { vInput.focus(); vInput.select(); } catch (_) {} } }, 120);
+    }
+  }
+
   function closeValueDialog() {
     stopSpeech();
-    valueDialog.hidden = true;
-    editingMeasureId = null;
+    closeDialog(valueDialog);
+    dlg.id = null;
+    pendingFocus = false;
   }
-  $("valueDialogCancel").addEventListener("click", closeValueDialog);
-  $("valueDialogOk").addEventListener("click", () => {
-    if (editingMeasureId !== null) {
-      const m = measures.find((x) => x.id === editingMeasureId);
-      if (m) {
-        remember();
-        m.value = valueDialogInput.value.replace(/,/g, ".").replace(/[^\d.]/g, "");
-        draw();
-        renderMeasureList();
-      }
+
+  function commitValue() {
+    const m = measures.find((x) => x.id === dlg.id);
+    if (m) {
+      const p = speech.parseNumber(vInput.value, { typed: true });
+      if (!dlg.isNew) remember(); // neue Linie: Rückgängig entfernt Linie samt Wert in einem Schritt
+      m.value = p.value;
+      m.unit = p.unit || vUnit.value || " mm";
+      refresh();
     }
     closeValueDialog();
+  }
+
+  $("valueDialogOk").addEventListener("click", commitValue);
+  $("valueDialogCancel").addEventListener("click", closeValueDialog);
+  vMic.addEventListener("click", () => {
+    if (dlg.listener) { stopSpeech(); vHint.textContent = "Gestoppt – tippen oder nochmal 🎤."; }
+    else startSpeech();
   });
-  valueDialogMic.addEventListener("click", () => {
-    if (valueDialogMic.classList.contains("listening")) {
-      stopSpeech();
-      valueDialogHint.textContent = "Gestoppt – tippen oder nochmal 🎤.";
-    } else {
-      speakNumber();
-    }
-  });
-  valueDialogInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") $("valueDialogOk").click();
+  vInput.addEventListener("input", () => { clearTimeout(dlg.confirmTimer); });
+  vUnit.addEventListener("change", () => { clearTimeout(dlg.confirmTimer); });
+  vInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") commitValue();
     if (e.key === "Escape") closeValueDialog();
   });
+  $("keyboardToggle").addEventListener("click", () => {
+    stopSpeech();
+    const text = vInput.inputMode !== "text";
+    vInput.inputMode = text ? "text" : "decimal";
+    $("keyboardToggle").textContent = text ? "123 Zahlen-Tastatur" : "⌨ Text-Tastatur (für iPhone-Diktat)";
+    vHint.textContent = text ? "Tastatur-Mikrofon nutzen und z. B. „zwölfhundert“ sagen – wird beim Übernehmen in eine Zahl umgewandelt." : "Zahl tippen oder 🎤 antippen";
+    vInput.blur(); vInput.focus();
+  });
 
-  // ---------- Pointer: 1 Finger = Werkzeug, 2 Finger = Zoom + Schieben ----------
+  // ---------- Menü bei langem Drücken ----------
+  function openActionDialog(id) {
+    const m = measures.find((x) => x.id === id);
+    if (!m) return;
+    actionMeasureId = id;
+    actionColorRemembered = false;
+    selectedId = id;
+    $("actionTitle").textContent = `Maß ${measures.indexOf(m) + 1}: ${m.value ? fmt(m.value) + (m.unit || "") : "kein Wert"}`;
+    $("actColor").value = m.color || "#ff3b30";
+    renderMeasureList(); draw();
+    showDialog(actionDialog);
+  }
+  const closeActionDialog = () => { closeDialog(actionDialog); actionMeasureId = null; };
+  $("actClose").addEventListener("click", closeActionDialog);
+  $("actValue").addEventListener("click", () => { const id = actionMeasureId; closeActionDialog(); openValueDialog(id); });
+  $("actMic").addEventListener("click", () => { const id = actionMeasureId; closeActionDialog(); openValueDialog(id, { mic: true }); });
+  $("actColor").addEventListener("input", (e) => {
+    const m = measures.find((x) => x.id === actionMeasureId);
+    if (!m) return;
+    if (!actionColorRemembered) { remember(); actionColorRemembered = true; }
+    m.color = e.target.value;
+    draw(); scheduleAutosave();
+  });
+  $("actDuplicate").addEventListener("click", () => {
+    const m = measures.find((x) => x.id === actionMeasureId);
+    if (!m) return;
+    remember();
+    const off = scr(40);
+    const copy = Object.assign({}, m, { id: nextId++, x1: m.x1 + off, y1: m.y1 + off, x2: m.x2 + off, y2: m.y2 + off });
+    measures.push(copy);
+    selectedId = copy.id;
+    closeActionDialog();
+    refresh();
+  });
+  $("actDelete").addEventListener("click", () => {
+    remember();
+    measures = measures.filter((x) => x.id !== actionMeasureId);
+    if (selectedId === actionMeasureId) selectedId = null;
+    closeActionDialog();
+    refresh();
+  });
+
+  // ---------- Werkzeug-Leiste & Einstellungen ----------
+  buttons.undo.addEventListener("click", () => {
+    const last = history.pop();
+    if (!last) return;
+    const s = JSON.parse(last);
+    measures = s.measures; drawings = s.drawings; selectedId = s.selectedId; nextId = s.nextId || nextId;
+    snapPoint = null;
+    buttons.undo.disabled = history.length === 0;
+    refresh();
+  });
+  buttons.clear.addEventListener("click", () => {
+    if (!confirm("Alle Maßlinien und Zeichnungen löschen?")) return;
+    remember();
+    measures = []; drawings = []; selectedId = null; snapPoint = null;
+    refresh();
+  });
+  $("styleToggle").addEventListener("click", () => {
+    document.body.classList.toggle("site-bold");
+    $("styleToggle").textContent = document.body.classList.contains("site-bold") ? "Technisch" : "Baustellenstil";
+  });
+  colorInput.addEventListener("change", () => {
+    const m = measures.find((x) => x.id === selectedId);
+    if (m) { remember(); m.color = colorInput.value; refresh(); }
+  });
+  unitSelect.addEventListener("change", () => {
+    const m = measures.find((x) => x.id === selectedId);
+    if (m) { remember(); m.unit = unitSelect.value; refresh(); }
+  });
+  fontSizeInput.addEventListener("input", () => { draw(); scheduleAutosave(); });
+  document.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => setTool(b.dataset.tool)));
+  $("projectName").addEventListener("input", scheduleAutosave);
+
+  // ---------- Zeigerbedienung: 1 Finger = Werkzeug, 2 Finger = Zoom + Schieben ----------
+  const cancelLongPress = () => { clearTimeout(longPressTimer); longPressTimer = null; };
+  const endGesture = () => { activeDrawing = null; pointerStart = null; snapPoint = null; preSnap = null; cancelLongPress(); };
+
   function onPointerDown(e) {
     if (!photoLoaded) return;
     e.preventDefault();
-    canvasWrap.setPointerCapture(e.pointerId);
+    try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) {}
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    // Zweiter Finger → Multi-Touch: laufende Zeichnung abbrechen
-    if (pointers.size >= 2) {
+    if (pointers.size >= 2) { // zweiter Finger: laufende Aktion abbrechen
       multiTouchMode = true;
-      activeDrawing = null;
-      pointerStart = null;
-      snapPoint = null;
+      endGesture();
       hideCrosshair();
       const pts = [...pointers.values()];
       lastPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      lastPinchMid = {
-        x: (pts[0].x + pts[1].x) / 2,
-        y: (pts[0].y + pts[1].y) / 2
-      };
+      lastPinchMid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
       draw();
       return;
     }
 
-    // Ein Finger = Werkzeug
     multiTouchMode = false;
     updateCrosshair(e.clientX, e.clientY);
     let p = pointWithCrosshair(e);
     pointerStart = p;
+    pressInfo = { x: e.clientX, y: e.clientY };
     snapPoint = null;
+    preSnap = snapshot();
 
     if (tool === "select") {
       const hit = hitMeasure(p);
       if (hit) {
         selectedId = hit.measure.id;
-        remember();
-        if (hit.endpoint === 1 || hit.endpoint === 2) {
-          activeDrawing = { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint };
-        } else {
-          activeDrawing = {
-            type: "move-measure", id: hit.measure.id,
-            dx: p.x, dy: p.y,
-            original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2 },
-            moved: false
-          };
-        }
+        activeDrawing = hit.endpoint
+          ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false }
+          : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2 } };
+        // langes Drücken ohne Bewegen -> Menü
+        cancelLongPress();
+        longPressTimer = setTimeout(() => {
+          if (activeDrawing && !activeDrawing.moved && !multiTouchMode && /^move-/.test(activeDrawing.type)) {
+            const id = activeDrawing.id;
+            endGesture();
+            hideCrosshair();
+            try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
+            openActionDialog(id);
+          }
+        }, 550);
       } else {
         selectedId = null;
       }
@@ -1053,252 +975,190 @@
     if (tool === "eraser") {
       const hit = hitMeasure(p);
       if (hit) {
-        remember();
+        pushHistory(preSnap);
         measures = measures.filter((x) => x.id !== hit.measure.id);
         if (selectedId === hit.measure.id) selectedId = null;
+        refresh();
       } else {
         const idx = hitDrawing(p);
-        if (idx >= 0) { remember(); drawings.splice(idx, 1); }
+        if (idx >= 0) { pushHistory(preSnap); drawings.splice(idx, 1); refresh(); }
       }
-      renderMeasureList();
-      draw();
       return;
     }
 
-    if (tool === "text") {
-      openTextDialog(p);
+    if (tool === "text") { // Dialog erst beim Loslassen öffnen (sonst kommt die iOS-Tastatur nicht)
+      activeDrawing = { type: "text-place", p };
       return;
     }
 
-    remember();
     if (tool === "measure") {
       const sn = findSnap(p);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
     }
-
     activeDrawing = {
-      id: nextId++,
-      type: tool,
+      id: nextId++, type: tool,
       x1: p.x, y1: p.y, x2: p.x, y2: p.y,
-      color: colorInput.value,
-      width: Number(widthInput.value),
+      color: colorInput.value, width: Number(widthInput.value),
       points: tool === "freehand" ? [p] : undefined,
-      value: "",
-      unit: unitSelect.value
+      value: "", unit: unitSelect.value
     };
   }
 
   function onPointerMove(e) {
     if (!photoLoaded) return;
-    if (pointers.has(e.pointerId)) {
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    }
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    // --- Zwei Finger: Zoom + Pan ---
-    if (pointers.size >= 2) {
+    if (pointers.size >= 2) { // Zoom + Schieben
       multiTouchMode = true;
       hideCrosshair();
       const pts = [...pointers.values()];
       const distNow = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const mid = {
-        x: (pts[0].x + pts[1].x) / 2,
-        y: (pts[0].y + pts[1].y) / 2
-      };
-
-      if (lastPinchDist > 0) {
-        const factor = distNow / lastPinchDist;
-        // Zoom um die Mitte der beiden Finger
-        setZoom(viewScale * factor, mid.x, mid.y);
-      }
-      if (lastPinchMid) {
-        // Pan = Verschiebung der Fingermitte
-        viewOffsetX += mid.x - lastPinchMid.x;
-        viewOffsetY += mid.y - lastPinchMid.y;
-        applyViewTransform();
-      }
-
-      lastPinchDist = distNow;
-      lastPinchMid = mid;
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      if (lastPinchDist > 0) setZoom(viewScale * (distNow / lastPinchDist), mid.x, mid.y);
+      if (lastPinchMid) { viewOffsetX += mid.x - lastPinchMid.x; viewOffsetY += mid.y - lastPinchMid.y; applyViewTransform(); }
+      lastPinchDist = distNow; lastPinchMid = mid;
       return;
     }
-
-    // --- Ein Finger: Werkzeug ---
-    if (multiTouchMode) return; // nach Multi-Touch erst loslassen
+    if (multiTouchMode) return;
 
     updateCrosshair(e.clientX, e.clientY);
-    if (!pointerStart || !activeDrawing) return;
+    if (!pointerStart || !activeDrawing || activeDrawing.type === "text-place") return;
+
+    // kleine Zitterbewegung bei „Antippen / Lang drücken“ ignorieren
+    if (/^move-/.test(activeDrawing.type) && !activeDrawing.moved) {
+      if (!pressInfo || Math.hypot(e.clientX - pressInfo.x, e.clientY - pressInfo.y) < 8) return;
+      activeDrawing.moved = true;
+      cancelLongPress();
+    }
 
     let p = pointWithCrosshair(e);
 
     if (activeDrawing.type === "move-measure") {
       const m = measures.find((x) => x.id === activeDrawing.id);
       if (!m) return;
-      const dx = p.x - activeDrawing.dx;
-      const dy = p.y - activeDrawing.dy;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) activeDrawing.moved = true;
-      m.x1 = activeDrawing.original.x1 + dx;
-      m.y1 = activeDrawing.original.y1 + dy;
-      m.x2 = activeDrawing.original.x2 + dx;
-      m.y2 = activeDrawing.original.y2 + dy;
+      const dx = p.x - activeDrawing.dx, dy = p.y - activeDrawing.dy;
+      m.x1 = activeDrawing.original.x1 + dx; m.y1 = activeDrawing.original.y1 + dy;
+      m.x2 = activeDrawing.original.x2 + dx; m.y2 = activeDrawing.original.y2 + dy;
       draw();
       return;
     }
-
     if (activeDrawing.type === "move-endpoint") {
       const m = measures.find((x) => x.id === activeDrawing.id);
       if (!m) return;
       const sn = findSnap(p, m.id);
-      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
-      else snapPoint = null;
-      if (activeDrawing.endpoint === 1) { m.x1 = p.x; m.y1 = p.y; }
-      else { m.x2 = p.x; m.y2 = p.y; }
+      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
+      if (activeDrawing.endpoint === 1) { m.x1 = p.x; m.y1 = p.y; } else { m.x2 = p.x; m.y2 = p.y; }
       draw();
       return;
     }
-
     if (activeDrawing.type === "measure") {
       const sn = findSnap(p);
-      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
-      else snapPoint = null;
+      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
     }
-
-    activeDrawing.x2 = p.x;
-    activeDrawing.y2 = p.y;
-    if (activeDrawing.type === "freehand") activeDrawing.points.push(p);
+    activeDrawing.x2 = p.x; activeDrawing.y2 = p.y;
+    if (activeDrawing.type === "freehand") {
+      const last = activeDrawing.points[activeDrawing.points.length - 1];
+      if (dist(last, p) > scr(1.5)) activeDrawing.points.push(p);
+    }
     draw();
   }
 
   function onPointerUp(e) {
     pointers.delete(e.pointerId);
-
-    if (pointers.size < 2) {
-      lastPinchDist = 0;
-      lastPinchMid = null;
-    }
+    cancelLongPress();
+    if (pointers.size < 2) { lastPinchDist = 0; lastPinchMid = null; }
     if (pointers.size === 0) {
       hideCrosshair();
-      // Multi-Touch beendet – keine Werkzeug-Aktion aus dem Rest-Finger
-      if (multiTouchMode) {
-        multiTouchMode = false;
-        activeDrawing = null;
-        pointerStart = null;
-        snapPoint = null;
-        return;
-      }
+      if (multiTouchMode) { multiTouchMode = false; endGesture(); return; }
     }
-
     if (multiTouchMode || pointers.size > 0) return;
+    if (!activeDrawing) { pointerStart = null; snapPoint = null; return; }
 
-    if (!activeDrawing) {
-      pointerStart = null;
-      snapPoint = null;
+    const a = activeDrawing;
+
+    if (a.type === "text-place") {
+      endGesture();
+      openTextDialog(a.p);
       return;
     }
 
-    if (activeDrawing.type === "move-measure") {
-      // Nur echter Doppel-Tipp öffnet den Dialog (kein Einzelklick)
-      if (!activeDrawing.moved) {
+    if (a.type === "move-measure" || a.type === "move-endpoint") {
+      if (a.moved) {
+        pushHistory(preSnap);
+        scheduleAutosave();
+      } else if (a.type === "move-measure") { // Doppel-Tipp öffnet das Wert-Feld
         const now = Date.now();
-        // Doppelte pointerup-Events desselben Tipps ignorieren
-        if (now - lastPointerUpAt < 40) {
-          activeDrawing = null;
-          pointerStart = null;
-          snapPoint = null;
+        if (lastTap.id === a.id && now - lastTap.time < 450) {
+          lastTap = { id: null, time: 0 };
+          endGesture(); draw(); renderMeasureList();
+          openValueDialog(a.id, { fromPointer: true });
           return;
         }
-        lastPointerUpAt = now;
-
-        if (
-          tapArmedId === activeDrawing.id &&
-          now < tapArmedUntil &&
-          (now - lastTapTime) >= 70
-        ) {
-          // Zweiter Tipp → Dialog
-          tapArmedId = null;
-          tapArmedUntil = 0;
-          lastTapTime = 0;
-          lastTapMeasureId = null;
-          const id = activeDrawing.id;
-          activeDrawing = null;
-          pointerStart = null;
-          snapPoint = null;
-          draw();
-          renderMeasureList();
-          openValueDialog(id, false);
-          return;
-        }
-
-        // Erster Tipp → nur merken, Dialog NICHT öffnen
-        tapArmedId = activeDrawing.id;
-        tapArmedUntil = now + 500;
-        lastTapTime = now;
-        lastTapMeasureId = activeDrawing.id;
-      } else {
-        // Verschoben → ausstehenden Doppel-Tipp verwerfen
-        tapArmedId = null;
-        tapArmedUntil = 0;
+        lastTap = { id: a.id, time: now };
       }
-      activeDrawing = null;
-      pointerStart = null;
-      snapPoint = null;
-      draw();
-      renderMeasureList();
+      endGesture(); draw(); renderMeasureList();
       return;
     }
 
-    if (activeDrawing.type === "move-endpoint") {
-      activeDrawing = null;
-      pointerStart = null;
-      snapPoint = null;
-      draw();
-      renderMeasureList();
+    // Zu kurze Linien verwerfen
+    if ((a.type === "line" || a.type === "measure") && dist({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }) < scr(8)) {
+      endGesture(); draw();
       return;
     }
 
-    if (
-      (activeDrawing.type === "line" || activeDrawing.type === "measure") &&
-      dist({ x: activeDrawing.x1, y: activeDrawing.y1 }, { x: activeDrawing.x2, y: activeDrawing.y2 }) < 8
-    ) {
-      activeDrawing = null;
-      pointerStart = null;
-      snapPoint = null;
-      draw();
-      return;
-    }
-
-    if (activeDrawing.type === "measure") {
-      measures.push({
-        id: activeDrawing.id,
-        x1: activeDrawing.x1, y1: activeDrawing.y1,
-        x2: activeDrawing.x2, y2: activeDrawing.y2,
-        value: "", unit: activeDrawing.unit || unitSelect.value,
-        color: activeDrawing.color
-      });
-      selectedId = activeDrawing.id;
-      // Wert nur per Doppel-Tipp oder über die Maßliste
+    pushHistory(preSnap);
+    let newMeasureId = null;
+    if (a.type === "measure") {
+      measures.push({ id: a.id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, value: "", unit: a.unit || unitSelect.value, color: a.color });
+      selectedId = a.id;
+      newMeasureId = a.id;
     } else {
-      drawings.push(activeDrawing);
+      drawings.push(a);
     }
+    endGesture();
+    refresh();
+    // Maßlinie fertig -> sofort das Feld für den Wert öffnen
+    if (newMeasureId !== null) openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
+  }
 
-    activeDrawing = null;
-    pointerStart = null;
-    snapPoint = null;
+  function onPointerCancel(e) { // z. B. System-Geste: nichts übernehmen
+    pointers.delete(e.pointerId);
+    if (pointers.size === 0) { multiTouchMode = false; hideCrosshair(); }
+    endGesture();
     draw();
-    renderMeasureList();
   }
 
   canvasWrap.addEventListener("pointerdown", onPointerDown);
   canvasWrap.addEventListener("pointermove", onPointerMove);
   canvasWrap.addEventListener("pointerup", onPointerUp);
-  canvasWrap.addEventListener("pointercancel", onPointerUp);
-  canvasWrap.addEventListener("pointerleave", (e) => {
-    if (pointers.size === 0) hideCrosshair();
-  });
+  canvasWrap.addEventListener("pointercancel", onPointerCancel);
+  canvasWrap.addEventListener("pointerleave", () => { if (pointers.size === 0) hideCrosshair(); });
+  canvasWrap.addEventListener("contextmenu", (e) => e.preventDefault());
+  // iOS: Tastatur öffnet nur innerhalb der Berührung -> beim touchend nochmal fokussieren
+  canvasWrap.addEventListener("touchend", () => {
+    const which = pendingFocus; pendingFocus = false;
+    try {
+      if (which === "value" && !valueDialog.hidden && !dlg.listener) { vInput.focus(); vInput.select(); }
+      if (which === "text" && !textDialog.hidden) textDialogInput.focus();
+    } catch (_) {}
+  }, { passive: true });
 
-  $("projectName").addEventListener("input", () => {
-    if (photoLoaded) buttons.save.disabled = false;
-  });
+  // ---------- Start ----------
+  async function restore() {
+    try {
+      const saved = await storage.get(storage.AUTOSAVE_KEY);
+      if (saved) { applyProjectData(saved, false); return; }
+    } catch (_) {}
+    try { // altes Format (nur ein Projekt in localStorage)
+      const raw = localStorage.getItem("fotomass-project");
+      if (raw) applyProjectData(JSON.parse(raw), false);
+    } catch (_) {}
+  }
 
   setReady(false);
-  loadProject(false);
+  storage.requestPersistence();
+  restore();
+  if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register("service-worker.js").catch(() => {});
+  }
 })();

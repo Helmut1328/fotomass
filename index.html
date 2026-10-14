@@ -6,8 +6,11 @@
   <meta name="theme-color" content="#17212b">
   <meta name="description" content="FotoMaß – Fotos aufnehmen, Maße eintragen und Skizzen ergänzen.">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="FotoMaß">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
   <title>FotoMaß</title>
 </head>
@@ -59,7 +62,7 @@
           Fadenkreuz
         </label>
       </div>
-      <p class="hint touch-hint">1 Finger = zeichnen · 2 Finger = zoomen &amp; schieben · Maß-Wert: Doppel-Tipp</p>
+      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Maßlinie ziehen → Wert-Feld öffnet sich · Auswählen: Doppel-Tipp = Wert, lang drücken = Menü</p>
 
       <div class="toolbox">
         <div class="tool-grid">
@@ -74,7 +77,7 @@
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
           <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
-          <label>Schrift <input id="fontSizeInput" type="range" min="12" max="32" value="18"></label>
+          <label>Schrift <input id="fontSizeInput" type="range" min="10" max="40" value="24"></label>
           <label>Einheit
             <select id="unitSelect">
               <option value=" mm">mm</option>
@@ -84,7 +87,7 @@
           </label>
           <label class="snap-label">
             <input id="snapToggle" type="checkbox" checked>
-            Anfunkte
+            Einrasten
           </label>
         </div>
       </div>
@@ -94,8 +97,8 @@
         <button id="clearAll" class="danger" type="button" disabled>Löschen</button>
       </div>
       <div class="button-row action-row">
-        <button id="exportImage" type="button" disabled>🖼 Bild speichern</button>
-        <button id="exportProject" class="secondary" type="button" disabled>📦 Projekt-Datei</button>
+        <button id="exportImage" type="button" disabled>🖼 In Galerie (2 Fotos)</button>
+        <button id="exportProject" class="secondary" type="button" disabled>📁 In Dateien sichern</button>
       </div>
     </section>
 
@@ -111,21 +114,22 @@
 
     <section class="panel compact-panel">
       <label class="field-label" for="projectName">Projektname</label>
-      <input id="projectName" class="text-input" type="text" placeholder="Name …" autocomplete="off">
+      <input id="projectName" class="text-input" type="text" placeholder="z. B. Küche Müller" autocomplete="off">
       <div class="button-row" style="margin-top:8px">
-        <button id="saveProject" class="secondary" type="button" disabled>Im Browser speichern</button>
-        <button id="loadProject" class="secondary" type="button">Browser laden</button>
+        <button id="importProject" class="secondary" type="button">📂 Projekt-Datei öffnen</button>
+        <input id="projectFileInput" type="file" accept=".json,.fotomass,application/json,text/plain" hidden>
       </div>
       <div class="button-row" style="margin-top:8px">
-        <button id="importProject" class="secondary" type="button">📂 Datei laden</button>
-        <input id="projectFileInput" type="file" accept=".json,application/json" hidden>
+        <button id="saveProject" class="secondary" type="button" disabled>💾 Im Browser speichern</button>
+        <button id="loadProject" class="secondary" type="button">Browser-Projekte</button>
       </div>
-      <p id="saveStatus" class="hint">Bild → Galerie/Downloads. Projekt-Datei → beliebig sichern und später wieder öffnen.</p>
+      <p id="saveStatus" class="hint">Die Arbeit wird automatisch zwischengespeichert. „In Dateien sichern“ legt eine Projekt-Datei ab, die du später wieder öffnen und weiter bearbeiten kannst.</p>
     </section>
   </main>
 
   <footer>FotoMaß · Maße vor Fertigung vor Ort prüfen.</footer>
 
+  <!-- Text-Dialog -->
   <div id="textDialog" class="dialog" hidden>
     <div class="dialog-box">
       <label for="textDialogInput">Beschriftung</label>
@@ -137,14 +141,25 @@
     </div>
   </div>
 
+  <!-- Maßwert-Dialog -->
   <div id="valueDialog" class="dialog" hidden>
     <div class="dialog-box">
-      <label for="valueDialogInput">Maßwert</label>
+      <label for="valueDialogInput" id="valueDialogTitle">Maßwert</label>
       <div class="value-row">
-        <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234" autocomplete="off">
+        <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234" autocomplete="off" enterkeyhint="done">
+        <select id="valueDialogUnit" aria-label="Einheit">
+          <option value=" mm">mm</option>
+          <option value=" cm">cm</option>
+          <option value=" m">m</option>
+        </select>
         <button id="valueDialogMic" class="mic-btn" type="button" title="Sprache">🎤</button>
       </div>
       <p id="valueDialogHint" class="hint">Zahl tippen oder 🎤 antippen</p>
+      <div class="voice-options">
+        <label><input id="optAutoConfirm" type="checkbox" checked> Nach Sprache automatisch übernehmen</label>
+        <label><input id="optAutoMic" type="checkbox"> 🎤 beim Öffnen sofort starten</label>
+        <button id="keyboardToggle" class="link-btn" type="button">⌨ Text-Tastatur (für iPhone-Diktat)</button>
+      </div>
       <div class="dialog-actions">
         <button id="valueDialogCancel" class="secondary" type="button">Abbrechen</button>
         <button id="valueDialogOk" type="button">Übernehmen</button>
@@ -152,6 +167,51 @@
     </div>
   </div>
 
+  <!-- Menü bei langem Drücken auf eine Maßlinie -->
+  <div id="actionDialog" class="dialog" hidden>
+    <div class="dialog-box">
+      <label id="actionTitle">Maß</label>
+      <div class="action-list">
+        <button id="actValue" type="button">✏ Wert ändern</button>
+        <button id="actMic" type="button">🎤 Wert sprechen</button>
+        <label class="action-color">🎨 Farbe <input id="actColor" type="color" value="#ff3b30"></label>
+        <button id="actDuplicate" class="secondary" type="button">⧉ Duplizieren</button>
+        <button id="actDelete" class="danger" type="button">🗑 Löschen</button>
+        <button id="actClose" class="secondary" type="button">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bilder sichern -->
+  <div id="saveDialog" class="dialog" hidden>
+    <div class="dialog-box wide">
+      <label>Zwei Fotos sichern</label>
+      <div class="preview-grid">
+        <figure><img id="prevOriginal" alt="Original"><figcaption>Original</figcaption></figure>
+        <figure><img id="prevAnnotated" alt="Mit Maßen"><figcaption>Mit Maßen</figcaption></figure>
+      </div>
+      <button id="saveShare" type="button" class="big">📲 Beide in Fotos sichern</button>
+      <p id="saveDialogHint" class="hint">Im Menü „2 Bilder sichern“ wählen. Klappt das nicht: Bild lange drücken › „Zu Fotos hinzufügen“.</p>
+      <div class="dialog-actions">
+        <button id="saveDownload" class="secondary" type="button">⬇ Als Dateien laden</button>
+        <button id="saveClose" class="secondary" type="button">Fertig</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browser-Projekte -->
+  <div id="projectsDialog" class="dialog" hidden>
+    <div class="dialog-box wide">
+      <label>Projekte im Browser</label>
+      <div id="projectsList" class="projects-list"></div>
+      <div class="dialog-actions">
+        <button id="projectsClose" class="secondary" type="button">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="speech.js"></script>
+  <script src="storage.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
