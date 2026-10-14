@@ -21,46 +21,47 @@
   </header>
 
   <main>
-    <!-- Foto & Steuerung -->
-    <section class="panel controls">
-      <label class="file-button">
-        📷 Foto aufnehmen / auswählen
-        <input id="photoInput" type="file" accept="image/*" capture="environment">
-      </label>
-      <div class="button-row">
-        <button id="undo" class="secondary" type="button" disabled>↶ Rückgängig</button>
-        <button id="exportImage" class="secondary" type="button" disabled>Bild exportieren</button>
-        <button id="clearAll" class="danger" type="button" disabled>Alles löschen</button>
+    <!-- 1. Foto -->
+    <section class="panel">
+      <div class="section-heading">
+        <h2>1. Foto</h2>
+        <span id="photoStatus" class="status">Noch kein Foto</span>
       </div>
-      <p class="hint">Tipp: Maßlinie-Werkzeug wählen und auf dem Foto ziehen. Ausgewählte Maßlinien haben Greifpunkte an den Enden.</p>
+      <div class="button-row photo-buttons">
+        <label class="file-button">
+          📷 Kamera
+          <input id="photoCamera" type="file" accept="image/*" capture="environment">
+        </label>
+        <label class="file-button secondary-look">
+          🖼 Galerie
+          <input id="photoGallery" type="file" accept="image/*">
+        </label>
+      </div>
     </section>
 
-    <!-- Canvas -->
+    <!-- 2. Zeichenfläche -->
     <section class="panel editor-panel">
       <div class="section-heading">
-        <h2>Foto &amp; Zeichnung</h2>
-        <span id="photoStatus" class="status">Noch kein Foto</span>
+        <h2>2. Zeichnung</h2>
       </div>
       <div id="canvasWrap" class="canvas-wrap">
         <div id="emptyState">
           <span>📐</span>
           <strong>Hier erscheint dein Foto</strong>
-          <small>Foto aufnehmen oder aus der Mediathek wählen</small>
+          <small>Kamera oder Galerie wählen</small>
         </div>
         <canvas id="editorCanvas" aria-label="Foto mit Maßlinien und Zeichnungen"></canvas>
       </div>
 
-      <!-- Werkzeugleiste -->
       <div class="toolbox">
-        <h3>Werkzeuge</h3>
         <div class="tool-grid">
-          <button class="tool active" data-tool="select" type="button" title="Auswählen und verschieben">↖ Auswählen</button>
-          <button class="tool" data-tool="measure" type="button" title="Maßlinie ziehen">＋ Maßlinie</button>
-          <button class="tool" data-tool="freehand" type="button" title="Freihand zeichnen">✎ Freihand</button>
-          <button class="tool" data-tool="line" type="button" title="Gerade Linie">／ Linie</button>
-          <button class="tool" data-tool="rect" type="button" title="Rechteck">□ Rechteck</button>
-          <button class="tool" data-tool="text" type="button" title="Text platzieren">T Text</button>
-          <button class="tool" data-tool="eraser" type="button" title="Element tippen zum Löschen">⌫ Löschen</button>
+          <button class="tool active" data-tool="select" type="button">↖ Auswählen</button>
+          <button class="tool" data-tool="measure" type="button">＋ Maßlinie</button>
+          <button class="tool" data-tool="freehand" type="button">✎ Freihand</button>
+          <button class="tool" data-tool="line" type="button">／ Linie</button>
+          <button class="tool" data-tool="rect" type="button">□ Rechteck</button>
+          <button class="tool" data-tool="text" type="button">T Text</button>
+          <button class="tool" data-tool="eraser" type="button">⌫ Löschen</button>
         </div>
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
@@ -72,25 +73,35 @@
               <option value=" m">m</option>
             </select>
           </label>
+          <label class="snap-label">
+            <input id="snapToggle" type="checkbox" checked>
+            Anfunkte
+          </label>
         </div>
-        <p class="hint">Maßlinie: ziehen. Andere Formen: ziehen. Text: tippen. Löschen: Element antippen. Ausgewählte Maßlinie: Endpunkte greifen und verschieben.</p>
+        <p class="hint">Maßlinie ziehen · Endpunkte greifen · Anfunkte rasten an bestehende Maße an · Maß antippen oder 🎤 für Spracheingabe</p>
+      </div>
+
+      <div class="button-row" style="margin-top:12px">
+        <button id="undo" class="secondary" type="button" disabled>↶ Rückgängig</button>
+        <button id="exportImage" class="secondary" type="button" disabled>Bild exportieren</button>
+        <button id="clearAll" class="danger" type="button" disabled>Alles löschen</button>
       </div>
     </section>
 
-    <!-- Maße -->
+    <!-- 3. Maße -->
     <section class="panel">
       <div class="section-heading">
-        <h2>Maße</h2>
-        <span class="hint">Werte manuell eintragen</span>
+        <h2>3. Maße</h2>
+        <span class="hint">Wert tippen oder sprechen</span>
       </div>
       <div id="measureList" class="measure-list">
-        <p class="empty-list">Noch keine Maßlinien angelegt.</p>
+        <p class="empty-list">Noch keine Maßlinien. Werkzeug „＋ Maßlinie“ wählen und auf dem Foto ziehen.</p>
       </div>
     </section>
 
-    <!-- Projekt -->
+    <!-- 4. Projekt -->
     <section class="panel">
-      <h2>Projekt</h2>
+      <h2>4. Projekt</h2>
       <label class="field-label" for="projectName">Projektname</label>
       <input id="projectName" class="text-input" type="text" placeholder="z. B. Einbauschrank Flur" autocomplete="off">
       <div class="button-row" style="margin-top:10px">
@@ -103,7 +114,7 @@
 
   <footer>FotoMaß · Maße bitte vor Fertigung vor Ort prüfen.</footer>
 
-  <!-- Einfacher Text-Dialog (statt prompt) -->
+  <!-- Text-Dialog -->
   <div id="textDialog" class="dialog" hidden>
     <div class="dialog-box">
       <label for="textDialogInput">Beschriftung</label>
@@ -111,6 +122,22 @@
       <div class="dialog-actions">
         <button id="textDialogCancel" class="secondary" type="button">Abbrechen</button>
         <button id="textDialogOk" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Maßwert-Dialog (Tipp + Sprache) -->
+  <div id="valueDialog" class="dialog" hidden>
+    <div class="dialog-box">
+      <label for="valueDialogInput">Maßwert</label>
+      <div class="value-row">
+        <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234">
+        <button id="valueDialogMic" class="mic-btn" type="button" title="Per Sprache eingeben">🎤</button>
+      </div>
+      <p id="valueDialogHint" class="hint">Zahl sprechen oder tippen. Einheit steht darunter.</p>
+      <div class="dialog-actions">
+        <button id="valueDialogCancel" class="secondary" type="button">Abbrechen</button>
+        <button id="valueDialogOk" type="button">Übernehmen</button>
       </div>
     </div>
   </div>

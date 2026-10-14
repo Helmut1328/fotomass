@@ -1,19 +1,21 @@
 (() => {
   "use strict";
 
-  // ---------- DOM-Helfer ----------
   const $ = (id) => document.getElementById(id);
   const canvas = $("editorCanvas");
   const ctx = canvas.getContext("2d");
-  const photoInput = $("photoInput");
   const emptyState = $("emptyState");
   const unitSelect = $("unitSelect");
   const colorInput = $("colorInput");
   const widthInput = $("widthInput");
+  const snapToggle = $("snapToggle");
   const textDialog = $("textDialog");
   const textDialogInput = $("textDialogInput");
+  const valueDialog = $("valueDialog");
+  const valueDialogInput = $("valueDialogInput");
+  const valueDialogMic = $("valueDialogMic");
+  const valueDialogHint = $("valueDialogHint");
 
-  // ---------- Zustand ----------
   let photo = new Image();
   let photoLoaded = false;
   let photoData = null;
@@ -24,8 +26,12 @@
   let history = [];
   let nextId = 1;
   let pointerStart = null;
-  let activeDrawing = null; // laufende Zeichnung oder Move-Aktion
+  let activeDrawing = null;
   let pendingTextPoint = null;
+  let editingMeasureId = null;
+  let snapPoint = null; // aktuell eingerasteter Punkt {x,y}
+  let recognition = null;
+  let isListening = false;
 
   const buttons = {
     undo: $("undo"),
@@ -35,14 +41,68 @@
     load: $("loadProject")
   };
 
-  const HANDLE_R = 14;       // Radius der Endpunkt-Handles (Canvas-Pixel)
-  const HIT_TOLERANCE = 22;  // Treffer-Toleranz für Linien
+  const HANDLE_R = 14;
+  const HIT_TOLERANCE = 22;
+  const SNAP_DIST = 28; // Anfunk-Toleranz in Canvas-Pixeln
+
+  // ---------- Speech Recognition (optional) ----------
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.lang = "de-DE";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = false;
+
+    recognition.onresult = (event) => {
+      const raw = (event.results[0][0].transcript || "").trim();
+      // Nur Zahlen und Dezimalzeichen behalten
+      const cleaned = raw
+        .replace(/,/g, ".")
+        .replace(/[^\d.]/g, "")
+        .replace(/(\..*)\./g, "$1");
+      if (cleaned) {
+        valueDialogInput.value = cleaned;
+        valueDialogHint.textContent = "Erkannt: " + cleaned;
+      } else {
+        valueDialogHint.textContent = "Keine Zahl erkannt. Nochmal versuchen oder tippen.";
+      }
+      stopListening();
+    };
+    recognition.onerror = () => {
+      valueDialogHint.textContent = "Spracherkennung fehlgeschlagen. Bitte tippen.";
+      stopListening();
+    };
+    recognition.onend = () => stopListening();
+  }
+
+  function startListening() {
+    if (!recognition) {
+      valueDialogHint.textContent = "Spracheingabe wird von diesem Browser nicht unterstützt. Bitte tippen.";
+      return;
+    }
+    if (isListening) return;
+    try {
+      isListening = true;
+      valueDialogMic.classList.add("listening");
+      valueDialogHint.textContent = "Hört zu … Zahl sagen (z. B. „zwölfhundert“ oder „1234“)";
+      recognition.start();
+    } catch (e) {
+      stopListening();
+    }
+  }
+
+  function stopListening() {
+    isListening = false;
+    valueDialogMic.classList.remove("listening");
+    try { recognition && recognition.stop(); } catch (_) {}
+  }
 
   // ---------- History ----------
   function remember() {
     history.push(JSON.stringify({
-      measures: structuredClone ? structuredClone(measures) : JSON.parse(JSON.stringify(measures)),
-      drawings: structuredClone ? structuredClone(drawings) : JSON.parse(JSON.stringify(drawings)),
+      measures: JSON.parse(JSON.stringify(measures)),
+      drawings: JSON.parse(JSON.stringify(drawings)),
       selectedId,
       nextId
     }));
@@ -57,7 +117,7 @@
     buttons.undo.disabled = history.length === 0;
   }
 
-  // ---------- Canvas Größe ----------
+  // ---------- Canvas ----------
   function resizeCanvas() {
     if (!photoLoaded) return;
     const maxWidth = 1800;
@@ -67,7 +127,6 @@
     draw();
   }
 
-  // ---------- Zeichnen ----------
   function draw() {
     if (!photoLoaded) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -75,9 +134,42 @@
 
     drawings.forEach((d) => drawShape(d));
     measures.forEach((m) => drawMeasure(m));
+
     if (activeDrawing && activeDrawing.type !== "move-measure" && activeDrawing.type !== "move-endpoint") {
-      drawShape(activeDrawing);
+      if (activeDrawing.type === "measure") {
+        drawMeasurePreview(activeDrawing);
+      } else {
+        drawShape(activeDrawing);
+      }
     }
+
+    // Snap-Indikator
+    if (snapPoint) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(snapPoint.x, snapPoint.y, 10, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(0,200,83,0.35)";
+      ctx.fill();
+      ctx.strokeStyle = "#00c853";
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawMeasurePreview(d) {
+    ctx.save();
+    ctx.strokeStyle = d.color || colorInput.value;
+    ctx.fillStyle = d.color || colorInput.value;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(d.x1, d.y1);
+    ctx.lineTo(d.x2, d.y2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
   }
 
   function drawMeasure(m) {
@@ -89,13 +181,11 @@
     ctx.lineWidth = chosen ? 4 : 3;
     ctx.lineCap = "round";
 
-    // Linie
     ctx.beginPath();
     ctx.moveTo(m.x1, m.y1);
     ctx.lineTo(m.x2, m.y2);
     ctx.stroke();
 
-    // Pfeilspitzen
     const angle = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
     const head = 11;
     [
@@ -110,7 +200,7 @@
       ctx.fill();
     });
 
-    // Beschriftung
+    // Beschriftung bleibt immer auf der Linie
     const mx = (m.x1 + m.x2) / 2;
     const my = (m.y1 + m.y2) / 2;
     const label = `${m.value || "?"}${m.unit || " mm"}`;
@@ -123,7 +213,6 @@
     ctx.textBaseline = "middle";
     ctx.fillText(label, mx, my - 14);
 
-    // Auswahlrahmen + Endpunkt-Handles
     if (chosen) {
       ctx.setLineDash([5, 4]);
       ctx.strokeStyle = "#1682d5";
@@ -136,8 +225,6 @@
         Math.abs(m.y2 - m.y1) + pad * 2
       );
       ctx.setLineDash([]);
-
-      // Handles
       drawHandle(m.x1, m.y1);
       drawHandle(m.x2, m.y2);
     }
@@ -167,11 +254,9 @@
       if (!d.points || d.points.length < 2) { ctx.restore(); return; }
       ctx.beginPath();
       ctx.moveTo(d.points[0].x, d.points[0].y);
-      for (let i = 1; i < d.points.length; i++) {
-        ctx.lineTo(d.points[i].x, d.points[i].y);
-      }
+      for (let i = 1; i < d.points.length; i++) ctx.lineTo(d.points[i].x, d.points[i].y);
       ctx.stroke();
-    } else if (d.type === "line" || d.type === "measure") {
+    } else if (d.type === "line") {
       ctx.beginPath();
       ctx.moveTo(d.x1, d.y1);
       ctx.lineTo(d.x2, d.y2);
@@ -187,6 +272,32 @@
     ctx.restore();
   }
 
+  // ---------- Anfunkte (Snap) ----------
+  function getSnapCandidates(excludeId) {
+    const pts = [];
+    measures.forEach((m) => {
+      if (excludeId && m.id === excludeId) return;
+      pts.push({ x: m.x1, y: m.y1 });
+      pts.push({ x: m.x2, y: m.y2 });
+    });
+    return pts;
+  }
+
+  function findSnap(p, excludeId) {
+    if (!snapToggle.checked) return null;
+    const candidates = getSnapCandidates(excludeId);
+    let best = null;
+    let bestDist = SNAP_DIST;
+    for (const c of candidates) {
+      const d = Math.hypot(p.x - c.x, p.y - c.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = c;
+      }
+    }
+    return best;
+  }
+
   // ---------- Maßliste ----------
   function renderMeasureList() {
     const list = $("measureList");
@@ -195,7 +306,7 @@
     if (!measures.length) {
       const p = document.createElement("p");
       p.className = "empty-list";
-      p.textContent = "Noch keine Maßlinien angelegt.";
+      p.textContent = "Noch keine Maßlinien. Werkzeug „＋ Maßlinie“ wählen und auf dem Foto ziehen.";
       list.append(p);
       return;
     }
@@ -216,17 +327,29 @@
       });
 
       const input = document.createElement("input");
-      input.type = "number";
+      input.type = "text";
       input.inputMode = "decimal";
-      input.step = "any";
       input.placeholder = "Wert";
       input.setAttribute("aria-label", `Wert für Maß ${index + 1}`);
       input.value = m.value ?? "";
       input.addEventListener("change", () => {
         remember();
-        m.value = input.value;
+        m.value = input.value.replace(/,/g, ".").replace(/[^\d.]/g, "");
+        input.value = m.value;
         draw();
       });
+      // Tippen auf das Feld öffnet auch den Dialog (mit Mic)
+      input.addEventListener("focus", () => {
+        openValueDialog(m.id);
+        input.blur();
+      });
+
+      const mic = document.createElement("button");
+      mic.type = "button";
+      mic.className = "mic-btn";
+      mic.textContent = "🎤";
+      mic.title = "Per Sprache eingeben";
+      mic.addEventListener("click", () => openValueDialog(m.id, true));
 
       const del = document.createElement("button");
       del.type = "button";
@@ -241,7 +364,7 @@
         draw();
       });
 
-      row.append(title, input, del);
+      row.append(title, input, mic, del);
       list.append(row);
     });
   }
@@ -278,7 +401,6 @@
 
   // ---------- Hit-Tests ----------
   function hitMeasure(p) {
-    // Zuerst Endpunkte der ausgewählten Maßlinie prüfen
     if (selectedId !== null) {
       const m = measures.find((x) => x.id === selectedId);
       if (m) {
@@ -286,7 +408,6 @@
         if (dist(p, { x: m.x2, y: m.y2 }) < HANDLE_R + 6) return { measure: m, endpoint: 2 };
       }
     }
-    // Dann Segmente (von oben nach unten)
     for (let i = measures.length - 1; i >= 0; i--) {
       const m = measures[i];
       if (distanceToSegment(p, m.x1, m.y1, m.x2, m.y2) < HIT_TOLERANCE) {
@@ -308,32 +429,23 @@
       } else if (d.type === "line") {
         if (distanceToSegment(p, d.x1, d.y1, d.x2, d.y2) < HIT_TOLERANCE) return i;
       } else if (d.type === "rect") {
-        const x1 = Math.min(d.x1, d.x2);
-        const y1 = Math.min(d.y1, d.y2);
-        const x2 = Math.max(d.x1, d.x2);
-        const y2 = Math.max(d.y1, d.y2);
-        // Rand treffen
+        const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2);
+        const x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
         const nearBorder =
-          (p.x >= x1 - 8 && p.x <= x2 + 8 && Math.abs(p.y - y1) < 12) ||
-          (p.x >= x1 - 8 && p.x <= x2 + 8 && Math.abs(p.y - y2) < 12) ||
-          (p.y >= y1 - 8 && p.y <= y2 + 8 && Math.abs(p.x - x1) < 12) ||
-          (p.y >= y1 - 8 && p.y <= y2 + 8 && Math.abs(p.x - x2) < 12);
+          (p.x >= x1 - 8 && p.x <= x2 + 8 && (Math.abs(p.y - y1) < 12 || Math.abs(p.y - y2) < 12)) ||
+          (p.y >= y1 - 8 && p.y <= y2 + 8 && (Math.abs(p.x - x1) < 12 || Math.abs(p.x - x2) < 12));
         if (nearBorder) return i;
       } else if (d.type === "text") {
-        // grobe Text-Bounding-Box
         ctx.font = "bold 22px system-ui, sans-serif";
         const tw = ctx.measureText(d.text || "Notiz").width;
-        if (p.x >= d.x1 - 4 && p.x <= d.x1 + tw + 4 && p.y >= d.y1 - 24 && p.y <= d.y1 + 6) {
-          return i;
-        }
+        if (p.x >= d.x1 - 4 && p.x <= d.x1 + tw + 4 && p.y >= d.y1 - 24 && p.y <= d.y1 + 6) return i;
       }
     }
     return -1;
   }
 
-  // ---------- Foto laden ----------
-  photoInput.addEventListener("change", (e) => {
-    const file = e.target.files && e.target.files[0];
+  // ---------- Foto laden (Kamera + Galerie) ----------
+  function loadImageFile(file) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       alert("Bitte wähle eine Bilddatei aus.");
@@ -347,21 +459,31 @@
         photoLoaded = true;
         emptyState.hidden = true;
         canvas.style.display = "block";
-        $("photoStatus").textContent = file.name;
+        $("photoStatus").textContent = file.name || "Foto geladen";
         measures = [];
         drawings = [];
         history = [];
         selectedId = null;
         nextId = 1;
+        snapPoint = null;
         resizeCanvas();
         renderMeasureList();
         setReady(true);
-        $("saveStatus").textContent = "Foto geladen. Du kannst jetzt Maße und Zeichnungen anlegen.";
+        $("saveStatus").textContent = "Foto geladen. Maßlinien können jetzt gezeichnet werden.";
       };
       photo.onerror = () => alert("Bild konnte nicht geladen werden.");
       photo.src = photoData;
     };
     reader.readAsDataURL(file);
+  }
+
+  $("photoCamera").addEventListener("change", (e) => {
+    loadImageFile(e.target.files && e.target.files[0]);
+    e.target.value = "";
+  });
+  $("photoGallery").addEventListener("change", (e) => {
+    loadImageFile(e.target.files && e.target.files[0]);
+    e.target.value = "";
   });
 
   // ---------- Buttons ----------
@@ -373,6 +495,7 @@
     drawings = state.drawings;
     selectedId = state.selectedId;
     nextId = state.nextId || nextId;
+    snapPoint = null;
     renderMeasureList();
     draw();
     buttons.undo.disabled = history.length === 0;
@@ -384,6 +507,7 @@
     measures = [];
     drawings = [];
     selectedId = null;
+    snapPoint = null;
     renderMeasureList();
     draw();
   });
@@ -402,13 +526,14 @@
     if (!photoLoaded) return;
     try {
       const payload = {
-        version: 2,
+        version: 3,
         projectName: $("projectName").value,
         photoData,
         measures,
         drawings,
         nextId,
         unit: unitSelect.value,
+        snap: snapToggle.checked,
         savedAt: new Date().toISOString()
       };
       localStorage.setItem("fotomass-project", JSON.stringify(payload));
@@ -419,9 +544,7 @@
     }
   });
 
-  buttons.load.addEventListener("click", () => {
-    loadProject(true);
-  });
+  buttons.load.addEventListener("click", () => loadProject(true));
 
   function loadProject(showFeedback) {
     try {
@@ -448,7 +571,9 @@
         nextId = data.nextId || 1;
         selectedId = null;
         history = [];
+        snapPoint = null;
         if (data.unit) unitSelect.value = data.unit;
+        if (typeof data.snap === "boolean") snapToggle.checked = data.snap;
         resizeCanvas();
         renderMeasureList();
         setReady(true);
@@ -466,7 +591,6 @@
     }
   }
 
-  // Stil umschalten
   $("styleToggle").addEventListener("click", () => {
     document.body.classList.toggle("site-bold");
     $("styleToggle").textContent = document.body.classList.contains("site-bold")
@@ -474,7 +598,6 @@
       : "Baustellenstil";
   });
 
-  // Farbe der ausgewählten Maßlinie ändern
   colorInput.addEventListener("change", () => {
     if (selectedId === null) return;
     const m = measures.find((x) => x.id === selectedId);
@@ -485,7 +608,6 @@
     }
   });
 
-  // Einheit der ausgewählten Maßlinie ändern
   unitSelect.addEventListener("change", () => {
     if (selectedId === null) return;
     const m = measures.find((x) => x.id === selectedId);
@@ -497,7 +619,6 @@
     }
   });
 
-  // Werkzeug-Buttons
   document.querySelectorAll(".tool").forEach((b) => {
     b.addEventListener("click", () => setTool(b.dataset.tool));
   });
@@ -509,12 +630,10 @@
     textDialog.hidden = false;
     setTimeout(() => textDialogInput.focus(), 50);
   }
-
   function closeTextDialog() {
     textDialog.hidden = true;
     pendingTextPoint = null;
   }
-
   $("textDialogCancel").addEventListener("click", closeTextDialog);
   $("textDialogOk").addEventListener("click", () => {
     const txt = textDialogInput.value.trim();
@@ -538,15 +657,58 @@
     if (e.key === "Escape") closeTextDialog();
   });
 
+  // ---------- Maßwert-Dialog (Tipp + Sprache) ----------
+  function openValueDialog(measureId, startMic) {
+    editingMeasureId = measureId;
+    const m = measures.find((x) => x.id === measureId);
+    valueDialogInput.value = m ? (m.value || "") : "";
+    valueDialogHint.textContent = recognition
+      ? "Zahl sprechen oder tippen."
+      : "Sprache nicht verfügbar – bitte tippen.";
+    valueDialog.hidden = false;
+    setTimeout(() => {
+      valueDialogInput.focus();
+      if (startMic) startListening();
+    }, 80);
+  }
+
+  function closeValueDialog() {
+    stopListening();
+    valueDialog.hidden = true;
+    editingMeasureId = null;
+  }
+
+  $("valueDialogCancel").addEventListener("click", closeValueDialog);
+  $("valueDialogOk").addEventListener("click", () => {
+    if (editingMeasureId !== null) {
+      const m = measures.find((x) => x.id === editingMeasureId);
+      if (m) {
+        remember();
+        m.value = valueDialogInput.value.replace(/,/g, ".").replace(/[^\d.]/g, "");
+        draw();
+        renderMeasureList();
+      }
+    }
+    closeValueDialog();
+  });
+  valueDialogMic.addEventListener("click", () => {
+    if (isListening) stopListening();
+    else startListening();
+  });
+  valueDialogInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("valueDialogOk").click();
+    if (e.key === "Escape") closeValueDialog();
+  });
+
   // ---------- Pointer-Events ----------
   canvas.addEventListener("pointerdown", (e) => {
     if (!photoLoaded) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
-    const p = pointFromEvent(e);
+    let p = pointFromEvent(e);
     pointerStart = p;
+    snapPoint = null;
 
-    // --- Auswählen / Verschieben ---
     if (tool === "select") {
       const hit = hitMeasure(p);
       if (hit) {
@@ -556,17 +718,17 @@
           activeDrawing = {
             type: "move-endpoint",
             id: hit.measure.id,
-            endpoint: hit.endpoint,
-            startX: p.x,
-            startY: p.y
+            endpoint: hit.endpoint
           };
         } else {
+          // Doppeltes Tippen auf die Linie öffnet Werteingabe
           activeDrawing = {
             type: "move-measure",
             id: hit.measure.id,
             dx: p.x,
             dy: p.y,
-            original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2 }
+            original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2 },
+            moved: false
           };
         }
       } else {
@@ -577,7 +739,6 @@
       return;
     }
 
-    // --- Radierer ---
     if (tool === "eraser") {
       const hit = hitMeasure(p);
       if (hit) {
@@ -596,15 +757,22 @@
       return;
     }
 
-    // --- Text ---
     if (tool === "text") {
       openTextDialog(p);
       return;
     }
 
-    // --- Neue Form / Maßlinie beginnen ---
+    // Neue Form / Maßlinie – mit Snap am Start
     remember();
-    const common = {
+    if (tool === "measure") {
+      const sn = findSnap(p);
+      if (sn) {
+        p = { x: sn.x, y: sn.y };
+        snapPoint = sn;
+      }
+    }
+
+    activeDrawing = {
       id: nextId++,
       type: tool,
       x1: p.x,
@@ -613,26 +781,22 @@
       y2: p.y,
       color: colorInput.value,
       width: Number(widthInput.value),
-      points: tool === "freehand" ? [p] : undefined
+      points: tool === "freehand" ? [p] : undefined,
+      value: "",
+      unit: unitSelect.value
     };
-
-    if (tool === "measure") {
-      common.value = "";
-      common.unit = unitSelect.value;
-    }
-
-    activeDrawing = common;
   });
 
   canvas.addEventListener("pointermove", (e) => {
     if (!pointerStart || !activeDrawing) return;
-    const p = pointFromEvent(e);
+    let p = pointFromEvent(e);
 
     if (activeDrawing.type === "move-measure") {
       const m = measures.find((x) => x.id === activeDrawing.id);
       if (!m) return;
       const dx = p.x - activeDrawing.dx;
       const dy = p.y - activeDrawing.dy;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) activeDrawing.moved = true;
       m.x1 = activeDrawing.original.x1 + dx;
       m.y1 = activeDrawing.original.y1 + dy;
       m.x2 = activeDrawing.original.x2 + dx;
@@ -644,6 +808,13 @@
     if (activeDrawing.type === "move-endpoint") {
       const m = measures.find((x) => x.id === activeDrawing.id);
       if (!m) return;
+      const sn = findSnap(p, m.id);
+      if (sn) {
+        p = { x: sn.x, y: sn.y };
+        snapPoint = sn;
+      } else {
+        snapPoint = null;
+      }
       if (activeDrawing.endpoint === 1) {
         m.x1 = p.x;
         m.y1 = p.y;
@@ -655,25 +826,47 @@
       return;
     }
 
-    // Zeichnung fortsetzen
+    // Zeichnung fortsetzen – Snap am Ende bei Maßlinie
+    if (activeDrawing.type === "measure") {
+      const sn = findSnap(p);
+      if (sn) {
+        p = { x: sn.x, y: sn.y };
+        snapPoint = sn;
+      } else {
+        snapPoint = null;
+      }
+    }
+
     activeDrawing.x2 = p.x;
     activeDrawing.y2 = p.y;
-    if (activeDrawing.type === "freehand") {
-      activeDrawing.points.push(p);
-    }
+    if (activeDrawing.type === "freehand") activeDrawing.points.push(p);
     draw();
   });
 
   function finishPointer() {
     if (!activeDrawing) {
       pointerStart = null;
+      snapPoint = null;
       return;
     }
 
-    if (activeDrawing.type === "move-measure" || activeDrawing.type === "move-endpoint") {
-      // fertig verschoben
+    if (activeDrawing.type === "move-measure") {
+      // Wenn kaum bewegt → Werteingabe öffnen (Antippen der Maßlinie)
+      if (!activeDrawing.moved) {
+        openValueDialog(activeDrawing.id);
+      }
       activeDrawing = null;
       pointerStart = null;
+      snapPoint = null;
+      draw();
+      renderMeasureList();
+      return;
+    }
+
+    if (activeDrawing.type === "move-endpoint") {
+      activeDrawing = null;
+      pointerStart = null;
+      snapPoint = null;
       draw();
       renderMeasureList();
       return;
@@ -686,6 +879,7 @@
     ) {
       activeDrawing = null;
       pointerStart = null;
+      snapPoint = null;
       draw();
       return;
     }
@@ -702,12 +896,15 @@
         color: activeDrawing.color
       });
       selectedId = activeDrawing.id;
+      // Nach dem Zeichnen direkt Werteingabe anbieten
+      openValueDialog(activeDrawing.id);
     } else {
       drawings.push(activeDrawing);
     }
 
     activeDrawing = null;
     pointerStart = null;
+    snapPoint = null;
     draw();
     renderMeasureList();
   }
@@ -715,12 +912,10 @@
   canvas.addEventListener("pointerup", finishPointer);
   canvas.addEventListener("pointercancel", finishPointer);
 
-  // Projektname ändert nichts am disabled-Status außer beim Speichern
   $("projectName").addEventListener("input", () => {
     if (photoLoaded) buttons.save.disabled = false;
   });
 
-  // Beim Start: gespeichertes Projekt versuchen zu laden
   setReady(false);
   loadProject(false);
 })();
