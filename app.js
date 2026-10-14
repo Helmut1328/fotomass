@@ -37,6 +37,9 @@
   let snapPoint = null;
   let lastTapTime = 0;
   let lastTapMeasureId = null;
+  let lastPointerUpAt = 0;
+  let tapArmedId = null; // nach 1. Tipp: diese Maß-ID wartet auf 2. Tipp
+  let tapArmedUntil = 0;
 
   // Zoom / Pan (nur mit 2 Fingern)
   let viewScale = 1;
@@ -627,7 +630,7 @@
         input.value = m.value;
         draw();
       });
-      input.addEventListener("focus", () => { openValueDialog(m.id, false); input.blur(); });
+      // Kein automatisches Öffnen bei Fokus – nur tippen in der Liste oder 🎤
       const mic = document.createElement("button");
       mic.type = "button";
       mic.className = "mic-btn";
@@ -1095,17 +1098,47 @@
     }
 
     if (activeDrawing.type === "move-measure") {
-      // Nur Doppel-Tipp öffnet den Wert-Dialog
+      // Nur echter Doppel-Tipp öffnet den Dialog (kein Einzelklick)
       if (!activeDrawing.moved) {
         const now = Date.now();
-        if (lastTapMeasureId === activeDrawing.id && (now - lastTapTime) < 450) {
-          openValueDialog(activeDrawing.id, false);
+        // Doppelte pointerup-Events desselben Tipps ignorieren
+        if (now - lastPointerUpAt < 40) {
+          activeDrawing = null;
+          pointerStart = null;
+          snapPoint = null;
+          return;
+        }
+        lastPointerUpAt = now;
+
+        if (
+          tapArmedId === activeDrawing.id &&
+          now < tapArmedUntil &&
+          (now - lastTapTime) >= 70
+        ) {
+          // Zweiter Tipp → Dialog
+          tapArmedId = null;
+          tapArmedUntil = 0;
           lastTapTime = 0;
           lastTapMeasureId = null;
-        } else {
-          lastTapTime = now;
-          lastTapMeasureId = activeDrawing.id;
+          const id = activeDrawing.id;
+          activeDrawing = null;
+          pointerStart = null;
+          snapPoint = null;
+          draw();
+          renderMeasureList();
+          openValueDialog(id, false);
+          return;
         }
+
+        // Erster Tipp → nur merken, Dialog NICHT öffnen
+        tapArmedId = activeDrawing.id;
+        tapArmedUntil = now + 500;
+        lastTapTime = now;
+        lastTapMeasureId = activeDrawing.id;
+      } else {
+        // Verschoben → ausstehenden Doppel-Tipp verwerfen
+        tapArmedId = null;
+        tapArmedUntil = 0;
       }
       activeDrawing = null;
       pointerStart = null;
