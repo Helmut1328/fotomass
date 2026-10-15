@@ -69,6 +69,7 @@
         <div class="tool-grid">
           <button class="tool active" data-tool="select" type="button">↖ Auswählen</button>
           <button class="tool" data-tool="measure" type="button">＋ Maß</button>
+          <button class="tool" data-tool="angle" type="button">∠ Winkel</button>
           <button class="tool" data-tool="freehand" type="button">✎ Frei</button>
           <button class="tool" data-tool="line" type="button">／ Linie</button>
           <button class="tool" data-tool="rect" type="button">□ Rect</button>
@@ -79,6 +80,7 @@
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
           <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
           <label>Schrift <input id="fontSizeInput" type="range" min="10" max="40" value="24"></label>
+          <label class="text-bg-label"><input id="textBgToggle" type="checkbox" checked> Textfläche</label>
           <label>Einheit
             <select id="unitSelect">
               <option value=" mm">mm</option>
@@ -153,6 +155,7 @@
           <option value=" mm">mm</option>
           <option value=" cm">cm</option>
           <option value=" m">m</option>
+          <option value="°">°</option>
         </select>
         <button id="valueDialogMic" class="mic-btn" type="button" title="Sprache">🎤</button>
       </div>

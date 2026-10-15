@@ -286,13 +286,14 @@ input[type=checkbox] {
   accent-color: var(--accent);
 }
 select {
+  font-size: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   color: var(--ink);
   padding: 5px 6px;
   font: inherit;
-  font-size: 16px; /* verhindert Auto-Zoom auf dem iPhone */
+  font-size: 16px; /* iOS: verhindert automatisches Zoom bei Auswahlfeldern */
 }
 
 .measure-list { display: grid; gap: 7px; }
@@ -448,3 +449,7 @@ button:disabled.mic-btn, .measure-item input[readonly] { opacity: .55; }
 /* iPhone: Notch / Home-Indikator */
 .topbar { padding-top: max(10px, env(safe-area-inset-top)); padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
 body { padding-top: 0; }
+
+/* FotoMaß V1/V2: Textfläche und Winkelwerkzeug */
+.text-bg-label { display: inline-flex; align-items: center; gap: 5px; }
+.text-bg-label input { width: 18px; height: 18px; }

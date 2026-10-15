@@ -14,7 +14,7 @@
   const STORE_PH = "photos";
   const FORMAT_VERSION = 9;          // Projektformat (siehe parseProject / migrate)
   const TRASH_DAYS = 30;
-  const UNITS = [" mm", " cm", " m"];
+  const UNITS = [" mm", " cm", " m", "°"];
 
   // ---------- Hilfsfunktionen ----------
   function newId() {
@@ -157,7 +157,9 @@
       .map((m, i) => ({
         id: isNum(m.id) ? m.id : 100000 + i,
         x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2,
-        value: cleanValue(m.value), unit: unitOr(m.unit), color: colorOr(m.color),
+        x3: isNum(m.x3) ? m.x3 : undefined, y3: isNum(m.y3) ? m.y3 : undefined,
+        type: m.type === "angle" && isNum(m.x3) && isNum(m.y3) ? "angle" : "linear",
+        value: cleanValue(m.value), unit: unitOr(m.unit), color: colorOr(m.color), textBg: m.textBg !== false,
         label: cleanText(m.label, 40), locked: m.locked === true
       }));
 

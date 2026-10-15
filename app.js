@@ -52,6 +52,7 @@
   let redoStack = [];
   let tool = "select";
   let selectedId = null;
+  let anglePoints = [];
   let measures = [];
   let drawings = [];
   let history = [];
@@ -235,7 +236,12 @@
     drawings.forEach((d) => drawShape(g, d, k));
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
-    if (activeDrawing && !/^(move-|text-place)/.test(activeDrawing.type)) {
+    if (tool === "angle" && anglePoints.length) {
+      g.save(); g.strokeStyle = colorInput.value; g.fillStyle = colorInput.value; g.lineWidth = 2 * k;
+      g.beginPath(); anglePoints.forEach((pt,i) => i ? g.lineTo(pt.x,pt.y) : g.moveTo(pt.x,pt.y)); g.stroke();
+      anglePoints.forEach(pt => { g.beginPath(); g.arc(pt.x,pt.y,4*k,0,Math.PI*2); g.fill(); }); g.restore();
+    }
+    if (activeDrawing && !/^(move-|text-place|angle-point)/.test(activeDrawing.type)) {
       if (activeDrawing.type === "measure") drawMeasurePreview(g, activeDrawing, k);
       else drawShape(g, activeDrawing, k);
     }
@@ -268,6 +274,7 @@
 
   function drawMeasure(g, m, k, forExport) {
     const chosen = !forExport && m.id === selectedId;
+    if (m.type === "angle") { drawAngleMeasure(g, m, k, chosen); return; }
     const color = m.color || "#ff3b30";
     const fs = getFontSize() * k;
     g.save();
@@ -300,8 +307,10 @@
     if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
     g.translate((m.x1 + m.x2) / 2, (m.y1 + m.y2) / 2);
     g.rotate(textAngle);
-    g.fillStyle = "rgba(255,255,255,0.93)";
-    g.fillRect(-tw / 2 - 5 * k, -offset - th / 2 - 2 * k, tw + 10 * k, th + 4 * k);
+    if (m.textBg !== false) {
+      g.fillStyle = "rgba(255,255,255,0.93)";
+      g.fillRect(-tw / 2 - 5 * k, -offset - th / 2 - 2 * k, tw + 10 * k, th + 4 * k);
+    }
     g.fillStyle = color;
     g.textAlign = "center";
     g.textBaseline = "middle";
@@ -319,6 +328,31 @@
       if (!m.locked) { drawHandle(g, m.x1, m.y1); drawHandle(g, m.x2, m.y2); }
       g.restore();
     }
+  }
+
+  function angleRadians(m) {
+    const a1 = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
+    const a2 = Math.atan2(m.y3 - m.y1, m.x3 - m.x1);
+    return Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1));
+  }
+
+  function drawAngleMeasure(g, m, k, chosen) {
+    const color = m.color || "#ff3b30";
+    const fs = getFontSize() * k;
+    const a1 = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
+    const delta = angleRadians(m), a2 = a1 + delta;
+    const arm1 = Math.hypot(m.x2-m.x1,m.y2-m.y1), arm2 = Math.hypot(m.x3-m.x1,m.y3-m.y1);
+    const radius = Math.max(18*k, Math.min(48*k, Math.min(arm1,arm2)*0.35));
+    g.save(); g.strokeStyle = color; g.fillStyle = color; g.lineWidth = (chosen ? 4 : 3)*k; g.lineCap = "round";
+    g.beginPath(); g.moveTo(m.x1,m.y1); g.lineTo(m.x2,m.y2); g.moveTo(m.x1,m.y1); g.lineTo(m.x3,m.y3); g.stroke();
+    g.beginPath(); g.arc(m.x1,m.y1,radius,a1,a2,delta<0); g.stroke();
+    const mid=a1+delta/2, tx=m.x1+Math.cos(mid)*(radius+12*k), ty=m.y1+Math.sin(mid)*(radius+12*k);
+    const label=`${fmt(m.value)}°`; g.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
+    const tw=g.measureText(label).width, th=fs+6*k;
+    if (m.textBg !== false) { g.fillStyle="rgba(255,255,255,0.93)"; g.fillRect(tx-tw/2-5*k,ty-th/2-2*k,tw+10*k,th+4*k); }
+    g.fillStyle=color; g.textAlign="center"; g.textBaseline="middle"; g.fillText(label,tx,ty);
+    if (chosen) { drawHandle(g,m.x1,m.y1); drawHandle(g,m.x2,m.y2); drawHandle(g,m.x3,m.y3); }
+    g.restore();
   }
 
   function drawHandle(g, x, y) {
@@ -420,10 +454,11 @@
     if (sel && !sel.locked) {
       if (dist(p, { x: sel.x1, y: sel.y1 }) < endTol) return { measure: sel, endpoint: 1 };
       if (dist(p, { x: sel.x2, y: sel.y2 }) < endTol) return { measure: sel, endpoint: 2 };
+      if (sel.type === "angle" && dist(p, { x: sel.x3, y: sel.y3 }) < endTol) return { measure: sel, endpoint: 3 };
     }
     for (let i = measures.length - 1; i >= 0; i--) {
       const m = measures[i];
-      if (distanceToSegment(p, m.x1, m.y1, m.x2, m.y2) < lineTol) return { measure: m, endpoint: 0 };
+      if (distanceToSegment(p, m.x1, m.y1, m.x2, m.y2) < lineTol || (m.type === "angle" && distanceToSegment(p, m.x1, m.y1, m.x3, m.y3) < lineTol)) return { measure: m, endpoint: 0 };
     }
     return null;
   }
@@ -474,8 +509,8 @@
       const title = document.createElement("button");
       title.type = "button";
       title.className = "secondary";
-      title.textContent = `${m.locked ? "🔒 " : ""}Maß ${index + 1}`;
-      title.addEventListener("click", () => { selectedId = m.id; setTool("select"); renderMeasureList(); draw(); });
+      title.textContent = `${m.locked ? "🔒 " : ""}${m.type === "angle" ? "Winkel" : "Maß"} ${index + 1}`;
+      title.addEventListener("click", () => { selectedId = m.id; $("textBgToggle").checked = m.textBg !== false; setTool("select"); renderMeasureList(); draw(); });
 
       const input = document.createElement("input");
       input.type = "text";
@@ -527,13 +562,15 @@
   }
 
   function setTool(name) {
+    if (tool === "angle" && name !== "angle" && anglePoints.length) { anglePoints = []; draw(); }
     tool = name;
     document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
+    if (name === "angle") setStatus("Winkel: dreimal tippen – Scheitelpunkt, erster Schenkel, zweiter Schenkel.");
   }
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
-    measures = []; drawings = []; history = []; redoStack = []; selectedId = null; nextId = 1; snapPoint = null;
+    measures = []; drawings = []; history = []; redoStack = []; selectedId = null; anglePoints = []; nextId = 1; snapPoint = null;
     activeDrawing = null; updateHistoryButtons();
   }
 
@@ -1026,7 +1063,7 @@
     if (m.locked) { toast("🔒 Gesperrt – erst entsperren (lang drücken › Entsperren)."); return; }
     dlg.id = measureId;
     dlg.isNew = !!opts.isNew;
-    $("valueDialogTitle").textContent = `Maß ${measures.indexOf(m) + 1} – Wert`;
+    $("valueDialogTitle").textContent = `${m.type === "angle" ? "Winkel" : "Maß"} ${measures.indexOf(m) + 1} – Wert`;
     vInput.value = fmt(m.value);
     vUnit.value = m.unit || " mm";
     vInput.inputMode = "decimal";
@@ -1130,7 +1167,7 @@
     if (!m) return;
     remember();
     const off = scr(40);
-    const copy = Object.assign({}, m, { locked: false, id: nextId++, x1: m.x1 + off, y1: m.y1 + off, x2: m.x2 + off, y2: m.y2 + off });
+    const copy = Object.assign({}, m, { locked: false, id: nextId++, x1: m.x1 + off, y1: m.y1 + off, x2: m.x2 + off, y2: m.y2 + off, ...(m.type === "angle" ? { x3: m.x3 + off, y3: m.y3 + off } : {}) });
     measures.push(copy);
     selectedId = copy.id;
     closeActionDialog();
@@ -1166,6 +1203,11 @@
     if (m) { remember(); m.unit = unitSelect.value; refresh(); }
   });
   fontSizeInput.addEventListener("input", () => { draw(); scheduleAutosave(); });
+  $("textBgToggle").addEventListener("change", () => {
+    const m = measures.find((x) => x.id === selectedId);
+    if (m) { remember(); m.textBg = $("textBgToggle").checked; refresh(); }
+    else { draw(); scheduleAutosave(); }
+  });
   document.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => setTool(b.dataset.tool)));
   $("projectName").addEventListener("input", scheduleAutosave);
 
@@ -1206,7 +1248,7 @@
         selectedId = hit.measure.id;
         activeDrawing = hit.endpoint
           ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false, changed: false, armed }
-          : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2 } };
+          : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2, x3: hit.measure.x3, y3: hit.measure.y3 } };
         // langes Drücken ohne Bewegen -> Menü
         cancelLongPress();
         longPressTimer = setTimeout(() => {
@@ -1221,6 +1263,7 @@
       } else {
         selectedId = null;
       }
+      $("textBgToggle").checked = selectedId ? (measures.find(x => x.id === selectedId)?.textBg !== false) : true;
       renderMeasureList();
       draw();
       return;
@@ -1241,6 +1284,8 @@
       }
       return;
     }
+
+    if (tool === "angle") { activeDrawing = { type: "angle-point", p }; return; }
 
     if (tool === "text") { // Dialog erst beim Loslassen öffnen (sonst kommt die iOS-Tastatur nicht)
       activeDrawing = { type: "text-place", p };
@@ -1278,7 +1323,7 @@
     if (multiTouchMode) return;
 
     updateCrosshair(e.clientX, e.clientY);
-    if (!pointerStart || !activeDrawing || activeDrawing.type === "text-place") return;
+    if (!pointerStart || !activeDrawing || activeDrawing.type === "text-place" || activeDrawing.type === "angle-point") return;
 
     // kleine Zitterbewegung bei „Antippen / Lang drücken“ ignorieren
     if (/^move-/.test(activeDrawing.type) && !activeDrawing.moved) {
@@ -1298,6 +1343,7 @@
       const dx = p.x - activeDrawing.dx, dy = p.y - activeDrawing.dy;
       m.x1 = activeDrawing.original.x1 + dx; m.y1 = activeDrawing.original.y1 + dy;
       m.x2 = activeDrawing.original.x2 + dx; m.y2 = activeDrawing.original.y2 + dy;
+      if (m.type === "angle") { m.x3 = activeDrawing.original.x3 + dx; m.y3 = activeDrawing.original.y3 + dy; }
       draw();
       return;
     }
@@ -1307,7 +1353,8 @@
       activeDrawing.changed = true;
       const sn = findSnap(p, m.id);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
-      if (activeDrawing.endpoint === 1) { m.x1 = p.x; m.y1 = p.y; } else { m.x2 = p.x; m.y2 = p.y; }
+      if (activeDrawing.endpoint === 1) { m.x1 = p.x; m.y1 = p.y; } else if (activeDrawing.endpoint === 3 && m.type === "angle") { m.x3 = p.x; m.y3 = p.y; } else { m.x2 = p.x; m.y2 = p.y; }
+      if (m.type === "angle") m.value = (Math.abs(angleRadians(m))*180/Math.PI).toFixed(1);
       draw();
       return;
     }
@@ -1335,6 +1382,18 @@
     if (!activeDrawing) { pointerStart = null; snapPoint = null; return; }
 
     const a = activeDrawing;
+
+    if (a.type === "angle-point") {
+      const beforeAngleTap = preSnap;
+      anglePoints.push({x:a.p.x,y:a.p.y}); endGesture();
+      if (anglePoints.length < 3) { setStatus(`Winkel: Punkt ${anglePoints.length} von 3 gesetzt – ${anglePoints.length === 1 ? "Scheitel" : "erster Schenkel"}. Weiter tippen.`); draw(); return; }
+      const [v,p1,p2]=anglePoints; anglePoints=[];
+      const a1=Math.atan2(p1.y-v.y,p1.x-v.x), a2=Math.atan2(p2.y-v.y,p2.x-v.x);
+      const angle=Math.abs(Math.atan2(Math.sin(a2-a1),Math.cos(a2-a1)))*180/Math.PI;
+      const id=nextId++; pushHistory(beforeAngleTap);
+      measures.push({id,type:"angle",x1:v.x,y1:v.y,x2:p1.x,y2:p1.y,x3:p2.x,y3:p2.y,value:angle.toFixed(1),unit:"°",color:colorInput.value,textBg:$("textBgToggle").checked});
+      selectedId=id; setTool("select"); refresh(); setStatus(`Winkel bemaßt: ${angle.toFixed(1).replace(".",",")}°`); return;
+    }
 
     if (a.type === "text-place") {
       endGesture();
@@ -1368,7 +1427,7 @@
     pushHistory(preSnap);
     let newMeasureId = null;
     if (a.type === "measure") {
-      measures.push({ id: a.id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, value: "", unit: a.unit || unitSelect.value, color: a.color });
+      measures.push({ id: a.id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked });
       selectedId = a.id;
       newMeasureId = a.id;
     } else {
