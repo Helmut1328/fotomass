@@ -287,6 +287,20 @@
     g.restore();
   }
 
+  // Die Maßbeschriftung kann unabhängig von der Linie positioniert werden.
+  function measureLabelPosition(m) {
+    if (m.type === "angle") {
+      const a1 = Math.atan2(m.y2-m.y1,m.x2-m.x1), delta = angleRadians(m), mid = a1 + delta/2;
+      const arm1 = Math.hypot(m.x2-m.x1,m.y2-m.y1), arm2 = Math.hypot(m.x3-m.x1,m.y3-m.y1);
+      const radius = Math.max(18*K(),Math.min(48*K(),Math.min(arm1,arm2)*0.35));
+      return {x:m.x1+Math.cos(mid)*(radius+12*K())+(m.labelOffsetX||0),y:m.y1+Math.sin(mid)*(radius+12*K())+(m.labelOffsetY||0)};
+    }
+    const fs=getFontSize()*K(), angle=Math.atan2(m.y2-m.y1,m.x2-m.x1);
+    let textAngle=angle; if(textAngle>Math.PI/2||textAngle< -Math.PI/2) textAngle+=Math.PI;
+    const offset=fs*0.75;
+    return {x:(m.x1+m.x2)/2+Math.sin(textAngle)*offset+(m.labelOffsetX||0),y:(m.y1+m.y2)/2-Math.cos(textAngle)*offset+(m.labelOffsetY||0)};
+  }
+
   function drawMeasure(g, m, k, forExport) {
     const chosen = !forExport && m.id === selectedId;
     if (m.type === "angle") { drawAngleMeasure(g, m, k, chosen); return; }
@@ -320,7 +334,7 @@
     const offset = fs * 0.75;
     let textAngle = angle;
     if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
-    g.translate((m.x1 + m.x2) / 2, (m.y1 + m.y2) / 2);
+    g.translate((m.x1 + m.x2) / 2 + (m.labelOffsetX || 0), (m.y1 + m.y2) / 2 + (m.labelOffsetY || 0));
     g.rotate(textAngle);
     if (m.textBg !== false) {
       g.fillStyle = "rgba(255,255,255,0.93)";
@@ -361,7 +375,7 @@
     g.save(); g.strokeStyle = color; g.fillStyle = color; g.lineWidth = (chosen ? 4 : 3)*k; g.lineCap = "round";
     g.beginPath(); g.moveTo(m.x1,m.y1); g.lineTo(m.x2,m.y2); g.moveTo(m.x1,m.y1); g.lineTo(m.x3,m.y3); g.stroke();
     g.beginPath(); g.arc(m.x1,m.y1,radius,a1,a2,delta<0); g.stroke();
-    const mid=a1+delta/2, tx=m.x1+Math.cos(mid)*(radius+12*k), ty=m.y1+Math.sin(mid)*(radius+12*k);
+    const mid=a1+delta/2, tx=m.x1+Math.cos(mid)*(radius+12*k)+(m.labelOffsetX||0), ty=m.y1+Math.sin(mid)*(radius+12*k)+(m.labelOffsetY||0);
     const label=`${fmt(m.value)}°`; g.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
     const tw=g.measureText(label).width, th=fs+6*k;
     if (m.textBg !== false) { g.fillStyle="rgba(255,255,255,0.93)"; g.fillRect(tx-tw/2-5*k,ty-th/2-2*k,tw+10*k,th+4*k); }
@@ -472,6 +486,14 @@
 
   function hitMeasure(p) {
     const endTol = scr(26), lineTol = scr(20);
+    // Beschriftung vor der Linie prüfen, damit sie unabhängig verschoben werden kann.
+    for (let i=measures.length-1;i>=0;i--) {
+      const m=measures[i], pos=measureLabelPosition(m);
+      const label=m.type==="angle" ? `${fmt(m.value)}°` : `${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
+      const fs=getFontSize()*K(); ctx.save(); ctx.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
+      const halfW=ctx.measureText(label).width/2+scr(12), halfH=fs/2+scr(10); ctx.restore();
+      if(Math.abs(p.x-pos.x)<=halfW && Math.abs(p.y-pos.y)<=halfH) return {measure:m,endpoint:0,label:true};
+    }
     // Endpunkte nur beim ausgewählten (sichtbare Griffe), nicht gesperrten Maß – schützt vor versehentlichem Verziehen
     const sel = measures.find((x) => x.id === selectedId);
     if (sel && !sel.locked) {
@@ -1389,6 +1411,12 @@
       const hit = hitMeasure(p);
       if (hit) {
         selectedDrawingId = null;
+        if (hit.label) {
+          const armedLabel = selectedId === hit.measure.id && !hit.measure.locked;
+          selectedId = hit.measure.id;
+          activeDrawing = { type:"move-label", id:hit.measure.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:armedLabel, originalX:hit.measure.labelOffsetX||0, originalY:hit.measure.labelOffsetY||0 };
+          cancelLongPress(); renderMeasureList(); draw(); return;
+        }
         // Erst antippen = auswählen. Verschieben geht nur, wenn das Maß schon ausgewählt und nicht gesperrt ist.
         const armed = selectedId === hit.measure.id && !hit.measure.locked;
         selectedId = hit.measure.id;
@@ -1505,6 +1533,14 @@
       }
       draw(); return;
     }
+    if (activeDrawing.type === "move-label") {
+      const m=measures.find((x)=>x.id===activeDrawing.id);
+      if(!m||m.locked) return;
+      activeDrawing.changed=true;
+      m.labelOffsetX=activeDrawing.originalX+(p.x-activeDrawing.dx);
+      m.labelOffsetY=activeDrawing.originalY+(p.y-activeDrawing.dy);
+      draw(); return;
+    }
     if (activeDrawing.type === "move-measure") {
       const m = measures.find((x) => x.id === activeDrawing.id);
       if (!m || m.locked) return;
@@ -1575,6 +1611,10 @@
     if (a.type === "move-image" || a.type === "move-resize-image") {
       if (a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); }
       endGesture(); draw(); return;
+    }
+    if (a.type === "move-label") {
+      if(a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); }
+      endGesture(); draw(); renderMeasureList(); return;
     }
     if (a.type === "move-measure" || a.type === "move-endpoint") {
       if (a.moved) {

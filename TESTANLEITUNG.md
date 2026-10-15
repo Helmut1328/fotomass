@@ -1,25 +1,35 @@
-# FotoMaß Version 4 – Testanleitung
+# FotoMaß Version 5 – Testanleitung
 
-## 1. Bild einfügen und zuschneiden
-1. Ein Hauptfoto öffnen.
-2. „Bild einfügen / zuschneiden“ antippen und ein Detailfoto wählen.
-3. Regler Links/Rechts/Oben/Unten bewegen; die Vorschau muss sich ändern.
-4. „Ausschnitt einfügen“ antippen. Das Detailbild erscheint auf dem Hauptfoto.
+## 1. Maßbeschriftung verschieben
+1. Auf dem iPhone ein Foto öffnen und eine Maßlinie mit Maßtext anlegen.
+2. Werkzeug „Auswählen“ aktivieren.
+3. Maßtext einmal antippen. Das Maß wird ausgewählt.
+4. Den Maßtext ein zweites Mal antippen und mit dem Finger ziehen. Der Text soll sich bewegen, die Maßlinie und ihre Endpunkte sollen an Ort und Stelle bleiben.
+5. Das Maß ein zweites Mal verschieben und prüfen, ob es sich weiterhin gut treffen lässt.
 
-## 2. Position und Größe
-1. Mit „Auswählen“ das eingefügte Bild antippen.
-2. Beim ersten Antippen wird es ausgewählt; erneut antippen und ziehen, um es zu verschieben.
-3. Bild erneut auswählen und den Griff unten rechts ziehen, um es zu skalieren.
-4. Mit dem Radierer das Bild entfernen; Rückgängig testen.
+## 2. Verschiedene Maßtypen
+- Lineares Maß verschieben.
+- Referenzmaßbeschriftung verschieben.
+- Winkelbeschriftung verschieben.
+- Prüfen, dass sich die Maßlinie bzw. die Winkelschenkel beim Verschieben des Textes nicht mitbewegen.
 
-## 3. Speichern und Export
-1. Projekt speichern, App neu laden und das Projekt wieder öffnen. Das Detailbild muss an der gleichen Stelle und in gleicher Größe erscheinen.
-2. Maßbild exportieren: Detailbild und Maße müssen gemeinsam erscheinen, Auswahlrahmen/Griffe dürfen nicht exportiert werden.
-3. Projektdatei exportieren und wieder importieren. Das Detailbild muss erhalten bleiben.
-4. Normale Maße, Winkel, Referenzmaß, Textfläche, Zeichnen, Rückgängig/Wiederholen und Originalfoto-Export erneut prüfen.
+## 3. Speichern, Verlauf und Export
+1. Beschriftung verschieben und warten, bis „gesichert“ angezeigt wird.
+2. Projekt schließen bzw. neu laden und wieder öffnen: Textposition muss erhalten bleiben.
+3. Rückgängig und Wiederholen testen.
+4. Maßbild exportieren: verschobener Text muss an seiner Position erscheinen; Auswahlrahmen und Griffe dürfen nicht im Export erscheinen.
+5. Projektdatei exportieren und wieder importieren. Textposition muss erhalten bleiben.
 
-## Einschränkungen
-- Das Bild wird beim Einfügen auf maximal 1400 Pixel lange Seite verkleinert.
-- Zuschneiden erfolgt beim Einfügen; ein bereits eingefügtes Bild muss zum Ändern des Ausschnitts erneut eingefügt werden.
-- Skalieren erfolgt über die untere rechte Ecke und behält das ursprüngliche Seitenverhältnis nicht zwingend bei.
-- Bitte auf echtem iPhone testen; Syntaxprüfung ersetzt keinen Funktionstest.
+## 4. Regressionstest der bisherigen Funktionen
+- Hauptfoto laden und Projekt speichern/öffnen.
+- Normale Maßlinie zeichnen, Endpunkte verschieben und Maßwert ändern.
+- Referenzmaß setzen und eine weitere Maßlinie berechnen lassen.
+- Winkel messen.
+- Textfläche ein- und ausschalten.
+- Freihand, Linie, Rechteck und Text ausprobieren.
+- Zusatzbild zuschneiden, einfügen, verschieben, skalieren und exportieren.
+- Rückgängig/Wiederholen und Export der Fotos testen.
+
+## Hinweise
+- Erst nach erfolgreichem Test die nächste Ausbaustufe beginnen.
+- Wenn der Browser nach dem Deployment eine alte Version zeigt, die Seite vollständig neu laden; der Service-Worker-Cache wurde für Version 5 auf `fotomass-v12` erhöht.

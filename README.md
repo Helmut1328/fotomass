@@ -1,18 +1,20 @@
-# FotoMaß – Version 4
+# FotoMaß – Version 5
 
 Smartphone-Aufmaß für Schreinerarbeiten und private Projekte.
 
-## Dateien
-Alle neun App-Dateien in dasselbe GitHub-Pages-Verzeichnis legen: `index.html`, `style.css`, `app.js`, `speech.js`, `storage.js`, `service-worker.js`, `manifest.json`, `apple-touch-icon.png`, `icon-512.png`.
+## Dateien für GitHub Pages
+Alle neun App-Dateien in dasselbe Verzeichnis wie bisher hochladen/ersetzen: `index.html`, `style.css`, `app.js`, `speech.js`, `storage.js`, `service-worker.js`, `manifest.json`, `apple-touch-icon.png`, `icon-512.png`. Diese Dokumentation und `TESTANLEITUNG.md` sind zusätzliche Hilfsdateien.
 
-## Neu in Version 4
-- Detailbild aus Kamera/Galerie-Dateien einfügen.
-- Vor dem Einfügen Bildränder über vier Regler zuschneiden.
-- Eingefügtes Bild mit „Auswählen“ antippen und dann verschieben; die untere rechte Ecke zum Skalieren ziehen.
-- Bilder werden als Teil der Zeichnungsdaten gespeichert, erscheinen im exportierten Maßbild und werden in Projektdateien mitgespeichert.
+## Neu in Version 5
+- Maßbeschriftungen können unabhängig von der Maßlinie verschoben werden.
+- Zum Verschieben: Beschriftung einmal antippen, damit das Maß ausgewählt ist; danach die Beschriftung erneut antippen und ziehen.
+- Verschobene Beschriftungspositionen werden im Projekt gespeichert und beim Export mit ausgegeben.
+- Rückgängig/Wiederholen und automatische Speicherung berücksichtigen die Änderung.
 
 ## Weiterhin enthalten
-Manuelle Maßlinien, Referenzmaßberechnung für annähernd frontale ebene Flächen, Winkelbemaßung, Textfläche ein/aus, Freihand, Linien, Rechtecke, Text, Rückgängig/Wiederholen, automatische Speicherung, Projektimport/-export und Originalfoto-Export.
+Manuelle Maßlinien, Endpunkte bearbeiten, Maßwert ändern, Winkelbemaßung, Referenzmaßberechnung für annähernd frontale ebene Flächen, Textfläche ein/aus, Freihand, Linien, Rechtecke, Text, zusätzliche Bilder einfügen/zuschneiden/verschieben/skalieren, Projektimport/-export, Rückgängig/Wiederholen und Bildexport.
 
-## Hinweis
-Bilder werden beim Einfügen auf maximal 1400 Pixel lange Seite verkleinert, um den Browser-Speicher zu schonen. Nur JPEG/PNG/WebP-Daten werden in Projektdateien übernommen. Die Funktion muss nach dem Upload auf dem echten iPhone getestet werden, insbesondere Speichern, Skalieren, Undo/Redo und Export.
+## Hinweise
+- Die Referenzmessung ist eine Näherung für annähernd frontale, ebene Flächen; Perspektive kann Ergebnisse verfälschen.
+- Zusatzbilder werden beim Einfügen verkleinert, um den Browser-Speicher zu schonen.
+- JavaScript-Syntax und Paketstruktur wurden geprüft. Ein vollständiger Funktionstest im echten iPhone-Browser war nicht möglich; bitte die Testanleitung nach dem Upload ausführen.
