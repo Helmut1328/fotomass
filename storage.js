@@ -166,7 +166,8 @@
       }));
 
     const drawings = (Array.isArray(raw.drawings) ? raw.drawings : []).slice(0, 5000)
-      .filter((d) => d && ["freehand", "line", "rect", "text"].includes(d.type))
+      .filter((d) => d && ["freehand", "line", "rect", "text", "image"].includes(d.type))
+      .filter((d) => d.type !== "image" || (typeof d.imageData === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(d.imageData) && d.imageData.length < 12e6))
       .map((d, i) => ({
         id: isNum(d.id) ? d.id : 200000 + i, type: d.type,
         x1: isNum(d.x1) ? d.x1 : 0, y1: isNum(d.y1) ? d.y1 : 0, x2: isNum(d.x2) ? d.x2 : 0, y2: isNum(d.y2) ? d.y2 : 0,
@@ -174,6 +175,8 @@
         width: isNum(d.width) && d.width > 0 ? Math.min(d.width, 40) : 4,
         fontSize: isNum(d.fontSize) && d.fontSize > 0 ? Math.min(d.fontSize, 120) : undefined,
         text: d.type === "text" ? cleanText(d.text, 200) : undefined,
+        imageData: d.type === "image" ? d.imageData : undefined,
+        sourceName: d.type === "image" ? cleanText(d.sourceName, 100) : undefined,
         points: d.type === "freehand" && Array.isArray(d.points)
           ? d.points.slice(0, 20000).filter((p) => p && isNum(p.x) && isNum(p.y)).map((p) => ({ x: p.x, y: p.y })) : undefined
       }));

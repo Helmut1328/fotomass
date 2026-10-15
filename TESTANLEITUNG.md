@@ -1,32 +1,25 @@
-# FotoMaß – Test Version 1 + 2
+# FotoMaß Version 4 – Testanleitung
 
-## Version 1: Hintergrund der Maßbeschriftung
-1. Ein Foto laden und eine normale Maßlinie zeichnen.
-2. Maßwert eingeben.
-3. Maß in der Liste auswählen und „Textfläche“ ausschalten: die weiße Fläche hinter dem Wert muss verschwinden, der Text bleibt.
-4. „Textfläche“ wieder einschalten.
-5. Projekt speichern, neu laden und prüfen, ob die Einstellung erhalten bleibt.
+## 1. Bild einfügen und zuschneiden
+1. Ein Hauptfoto öffnen.
+2. „Bild einfügen / zuschneiden“ antippen und ein Detailfoto wählen.
+3. Regler Links/Rechts/Oben/Unten bewegen; die Vorschau muss sich ändern.
+4. „Ausschnitt einfügen“ antippen. Das Detailbild erscheint auf dem Hauptfoto.
 
-## Version 2: Winkelbemaßung
-1. Werkzeug „∠ Winkel“ auswählen.
-2. Drei Punkte nacheinander antippen: zuerst den Scheitelpunkt, dann einen Punkt auf dem ersten Schenkel, dann einen Punkt auf dem zweiten Schenkel.
-3. Der Winkel und sein Gradwert (z. B. 90,0°) müssen erscheinen.
-4. Den Winkel auswählen, verschieben und einen der drei Griffe ziehen.
-5. Winkelwert in der Maßliste bearbeiten, Rückgängig/Wiederholen testen.
-6. Projekt speichern und erneut öffnen; Winkel muss erhalten bleiben.
-7. Exportbild prüfen: keine blauen Auswahlgriffe, Winkel und Textfläche korrekt.
+## 2. Position und Größe
+1. Mit „Auswählen“ das eingefügte Bild antippen.
+2. Beim ersten Antippen wird es ausgewählt; erneut antippen und ziehen, um es zu verschieben.
+3. Bild erneut auswählen und den Griff unten rechts ziehen, um es zu skalieren.
+4. Mit dem Radierer das Bild entfernen; Rückgängig testen.
 
-Hinweis: Winkel werden geometrisch aus den drei Punkten im Foto berechnet. Das ist ein Bildwinkel, kein automatisch perspektivkorrigierter realer Winkel.
+## 3. Speichern und Export
+1. Projekt speichern, App neu laden und das Projekt wieder öffnen. Das Detailbild muss an der gleichen Stelle und in gleicher Größe erscheinen.
+2. Maßbild exportieren: Detailbild und Maße müssen gemeinsam erscheinen, Auswahlrahmen/Griffe dürfen nicht exportiert werden.
+3. Projektdatei exportieren und wieder importieren. Das Detailbild muss erhalten bleiben.
+4. Normale Maße, Winkel, Referenzmaß, Textfläche, Zeichnen, Rückgängig/Wiederholen und Originalfoto-Export erneut prüfen.
 
-
-## Version 3: Referenzmaß
-1. Ein Foto mit einer möglichst frontal aufgenommenen Fläche öffnen (z. B. Schrankfront).
-2. „⚖ Referenz“ wählen.
-3. Eine Strecke zeichnen, deren echtes Maß sicher bekannt ist, z. B. 600 mm.
-4. Den tatsächlichen Wert eingeben und übernehmen. Die Referenzlinie wird mit „REF“ markiert.
-5. „＋ Maß“ wählen und weitere Strecken in derselben Fläche zeichnen. Der Wert wird automatisch berechnet und in der Maßliste mit „berechnet“ gekennzeichnet.
-6. Eine berechnete Linie doppelt antippen oder ihren Wert in der Liste ändern, wenn du ihn manuell korrigieren möchtest. Nach manueller Änderung bleibt dieser Wert manuell.
-7. Den Endpunkt der Referenzlinie verschieben: automatisch berechnete Werte müssen sich entsprechend aktualisieren.
-8. Projekt sichern, erneut öffnen und kontrollieren, dass Referenz und berechnete Kennzeichnungen erhalten bleiben. Exportbild ebenfalls prüfen.
-
-**Wichtige Einschränkung:** Der Maßstab gilt nur für Strecken auf derselben ebenen Fläche und bei annähernd gleicher Perspektive. Bei schrägen Fotos, Perspektivverzerrung oder Bauteilen in unterschiedlicher Tiefe sind berechnete Werte nur Näherungen. Winkelmaße werden nicht über das Referenzmaß skaliert.
+## Einschränkungen
+- Das Bild wird beim Einfügen auf maximal 1400 Pixel lange Seite verkleinert.
+- Zuschneiden erfolgt beim Einfügen; ein bereits eingefügtes Bild muss zum Ändern des Ausschnitts erneut eingefügt werden.
+- Skalieren erfolgt über die untere rechte Ecke und behält das ursprüngliche Seitenverhältnis nicht zwingend bei.
+- Bitte auf echtem iPhone testen; Syntaxprüfung ersetzt keinen Funktionstest.

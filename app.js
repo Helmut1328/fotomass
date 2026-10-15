@@ -35,6 +35,9 @@
   const actionDialog = $("actionDialog");
   const saveDialog = $("saveDialog");
   const projectsDialog = $("projectsDialog");
+  const insertImageInput = $("insertImageInput");
+  const cropPreviewCanvas = $("cropPreviewCanvas");
+  const cropPreviewCtx = cropPreviewCanvas.getContext("2d");
   const buttons = {
     undo: $("undo"), redo: $("redo"), export: $("exportImage"), exportProject: $("exportProject"),
     clear: $("clearAll"), save: $("saveProject"), load: $("loadProject"), importProject: $("importProject")
@@ -55,6 +58,10 @@
   let anglePoints = [];
   let measures = [];
   let drawings = [];
+  let selectedDrawingId = null;
+  let cropSourceImage = null;
+  let cropSourceName = "";
+  const drawingImageCache = new Map();
   let history = [];
   let nextId = 1;
   let activeDrawing = null;
@@ -125,7 +132,7 @@
   }
 
   // ---------- Verlauf ----------
-  const snapshot = () => JSON.stringify({ measures, drawings, selectedId, nextId });
+  const snapshot = () => JSON.stringify({ measures, drawings, selectedId, selectedDrawingId, nextId });
   function pushHistory(s) {
     history.push(s);
     if (history.length > 60) history.shift();
@@ -139,7 +146,7 @@
   }
   function restoreSnapshot(str) {
     const s = JSON.parse(str);
-    measures = s.measures; drawings = s.drawings; selectedId = s.selectedId; nextId = s.nextId || nextId;
+    measures = s.measures; drawings = s.drawings; selectedId = s.selectedId; selectedDrawingId = s.selectedDrawingId || null; nextId = s.nextId || nextId;
     snapPoint = null;
   }
   function undo() {
@@ -234,6 +241,14 @@
     g.clearRect(0, 0, g.canvas.width, g.canvas.height);
     g.drawImage(baseCanvas, 0, 0);
     drawings.forEach((d) => drawShape(g, d, k));
+    if (!forExport && selectedDrawingId) {
+      const sd = drawings.find((d) => d.id === selectedDrawingId && d.type === "image");
+      if (sd) {
+        g.save(); g.strokeStyle = "#1682d5"; g.lineWidth = scr(2); g.setLineDash([scr(5), scr(4)]);
+        g.strokeRect(sd.x1, sd.y1, sd.x2 - sd.x1, sd.y2 - sd.y1); g.setLineDash([]);
+        drawHandle(g, sd.x2, sd.y2); g.restore();
+      }
+    }
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
     if (tool === "angle" && anglePoints.length) {
@@ -379,7 +394,15 @@
     g.lineWidth = (d.width || 4) * k;
     g.lineCap = "round";
     g.lineJoin = "round";
-    if (d.type === "freehand") {
+    if (d.type === "image") {
+      let im = drawingImageCache.get(d.id);
+      if ((!im || im.__fmData !== d.imageData) && d.imageData) {
+        im = new Image(); im.__fmData = d.imageData; drawingImageCache.set(d.id, im);
+        im.onload = () => draw(); im.onerror = () => { drawingImageCache.delete(d.id); };
+        im.src = d.imageData;
+      }
+      if (im && im.complete && im.naturalWidth) g.drawImage(im, d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
+    } else if (d.type === "freehand") {
       const pts = d.points;
       if (pts && pts.length > 1) {
         g.beginPath();
@@ -467,7 +490,10 @@
     const tol = scr(20), k = K();
     for (let i = drawings.length - 1; i >= 0; i--) {
       const d = drawings[i];
-      if (d.type === "freehand" && d.points) {
+      if (d.type === "image") {
+        const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2), x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
+        if (p.x >= x1 - tol && p.x <= x2 + tol && p.y >= y1 - tol && p.y <= y2 + tol) return i;
+      } else if (d.type === "freehand" && d.points) {
         for (let j = 0; j < d.points.length - 1; j++) {
           if (distanceToSegment(p, d.points[j].x, d.points[j].y, d.points[j + 1].x, d.points[j + 1].y) < tol) return i;
         }
@@ -605,7 +631,7 @@
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
-    measures = []; drawings = []; history = []; redoStack = []; selectedId = null; anglePoints = []; nextId = 1; snapPoint = null;
+    measures = []; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
     activeDrawing = null; updateHistoryButtons();
   }
 
@@ -1227,6 +1253,64 @@
     deleteMeasure(id);
   });
 
+  // ---------- Bilder einfügen und zuschneiden (Version 4) ----------
+  const imageCropDialog = $("imageCropDialog");
+  const cropInputs = [$("cropLeft"), $("cropRight"), $("cropTop"), $("cropBottom")];
+  function paintCropPreview() {
+    if (!cropSourceImage) return;
+    const iw = cropSourceImage.naturalWidth, ih = cropSourceImage.naturalHeight;
+    const l = Number($("cropLeft").value) / 100, r = Number($("cropRight").value) / 100;
+    const t = Number($("cropTop").value) / 100, b = Number($("cropBottom").value) / 100;
+    const sx = Math.round(iw*l), sy = Math.round(ih*t);
+    const sw = Math.max(1, Math.round(iw*(1-l-r))), sh = Math.max(1, Math.round(ih*(1-t-b)));
+    cropPreviewCanvas.width = Math.min(900, sw); cropPreviewCanvas.height = Math.max(1, Math.round(cropPreviewCanvas.width * sh / sw));
+    if (cropPreviewCanvas.height > 600) { cropPreviewCanvas.height=600; cropPreviewCanvas.width=Math.max(1,Math.round(cropPreviewCanvas.height*sw/sh)); }
+    cropPreviewCtx.clearRect(0,0,cropPreviewCanvas.width,cropPreviewCanvas.height);
+    cropPreviewCtx.drawImage(cropSourceImage,sx,sy,sw,sh,0,0,cropPreviewCanvas.width,cropPreviewCanvas.height);
+  }
+  function closeCropDialog() { closeDialog(imageCropDialog); cropSourceImage = null; cropSourceName = ""; }
+  $("insertImageButton").addEventListener("click", () => {
+    if (!photoLoaded) { setStatus("Bitte zuerst ein Hauptfoto laden."); return; }
+    insertImageInput.click();
+  });
+  insertImageInput.addEventListener("change", () => {
+    const file = insertImageInput.files && insertImageInput.files[0]; insertImageInput.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setStatus("Bitte eine Bilddatei auswählen."); return; }
+    const url = URL.createObjectURL(file); const im = new Image();
+    im.onload = () => {
+      URL.revokeObjectURL(url); cropSourceImage = im; cropSourceName = file.name || "Detailbild";
+      cropInputs.forEach((input) => input.value = "0"); paintCropPreview(); showDialog(imageCropDialog);
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); setStatus("Das Bildformat kann nicht geöffnet werden. Bitte als JPEG oder PNG auswählen."); };
+    im.src = url;
+  });
+  cropInputs.forEach((input) => input.addEventListener("input", () => {
+    // Mindestens 20 % Bildfläche erhalten, damit sich kein leerer Ausschnitt ergibt.
+    const l=Number($("cropLeft").value), r=Number($("cropRight").value), t=Number($("cropTop").value), b=Number($("cropBottom").value);
+    if (l+r>80) { if (input.id==="cropLeft") $("cropRight").value=80-l; else $("cropLeft").value=80-r; }
+    if (t+b>80) { if (input.id==="cropTop") $("cropBottom").value=80-t; else $("cropTop").value=80-b; }
+    paintCropPreview();
+  }));
+  $("cropReset").addEventListener("click", () => { cropInputs.forEach((input)=>input.value="0"); paintCropPreview(); });
+  $("cropCancel").addEventListener("click", closeCropDialog);
+  $("cropInsert").addEventListener("click", () => {
+    if (!cropSourceImage || !photoLoaded) return;
+    const im=cropSourceImage, iw=im.naturalWidth, ih=im.naturalHeight;
+    const l=Number($("cropLeft").value)/100, r=Number($("cropRight").value)/100, t=Number($("cropTop").value)/100, b=Number($("cropBottom").value)/100;
+    const sx=Math.round(iw*l), sy=Math.round(ih*t), sw=Math.max(1,Math.round(iw*(1-l-r))), sh=Math.max(1,Math.round(ih*(1-t-b)));
+    const maxSide=1400, scale=Math.min(1,maxSide/Math.max(sw,sh));
+    const c=document.createElement("canvas"); c.width=Math.max(1,Math.round(sw*scale)); c.height=Math.max(1,Math.round(sh*scale));
+    c.getContext("2d").drawImage(im,sx,sy,sw,sh,0,0,c.width,c.height);
+    const imageData=c.toDataURL("image/jpeg",0.88);
+    const w=Math.min(canvas.width*0.38,480), h=w*c.height/c.width;
+    const x=Math.max(0,(canvas.width-w)/2), y=Math.max(0,(canvas.height-h)/2);
+    remember(); const id=nextId++;
+    const item={id,type:"image",x1:x,y1:y,x2:x+w,y2:y+h,imageData,sourceName:cropSourceName};
+    drawings.push(item); drawingImageCache.delete(id); selectedDrawingId=id; selectedId=null;
+    closeCropDialog(); setTool("select"); refresh(); setStatus("Bild eingefügt. Mit Auswählen verschieben; an der unteren rechten Ecke skalieren. Löschen über Radierer.");
+  });
+
   // ---------- Werkzeug-Leiste & Einstellungen ----------
   buttons.undo.addEventListener("click", undo);
   buttons.redo.addEventListener("click", redo);
@@ -1234,7 +1318,7 @@
     const keep = measures.filter(isLocked);
     if (!confirm("Alle Maßlinien und Zeichnungen löschen?" + (keep.length ? "\n(" + keep.length + " gesperrte Maße bleiben erhalten.)" : ""))) return;
     remember();
-    measures = keep; drawings = []; selectedId = null; snapPoint = null;
+    measures = keep; drawings = []; selectedId = null; selectedDrawingId = null; snapPoint = null;
     refresh();
     toast("Alles gelöscht.", "Rückgängig", undo, 8000);
   });
@@ -1304,6 +1388,7 @@
     if (tool === "select") {
       const hit = hitMeasure(p);
       if (hit) {
+        selectedDrawingId = null;
         // Erst antippen = auswählen. Verschieben geht nur, wenn das Maß schon ausgewählt und nicht gesperrt ist.
         const armed = selectedId === hit.measure.id && !hit.measure.locked;
         selectedId = hit.measure.id;
@@ -1323,6 +1408,15 @@
         }, 550);
       } else {
         selectedId = null;
+        const drawIndex = hitDrawing(p);
+        const imageDrawing = drawIndex >= 0 ? drawings[drawIndex] : null;
+        if (imageDrawing && imageDrawing.type === "image") {
+          const wasSelected = selectedDrawingId === imageDrawing.id;
+          selectedDrawingId = imageDrawing.id;
+          const resizeHit = wasSelected && dist(p, {x:imageDrawing.x2, y:imageDrawing.y2}) < scr(30);
+          activeDrawing = { type: resizeHit ? "move-resize-image" : "move-image", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:{x1:imageDrawing.x1,y1:imageDrawing.y1,x2:imageDrawing.x2,y2:imageDrawing.y2} };
+          cancelLongPress();
+        } else { selectedDrawingId = null; }
       }
       $("textBgToggle").checked = selectedId ? (measures.find(x => x.id === selectedId)?.textBg !== false) : true;
       renderMeasureList();
@@ -1341,7 +1435,7 @@
         toast("Maß gelöscht.", "Rückgängig", undo);
       } else {
         const idx = hitDrawing(p);
-        if (idx >= 0) { pushHistory(preSnap); drawings.splice(idx, 1); refresh(); }
+        if (idx >= 0) { pushHistory(preSnap); const removed = drawings.splice(idx, 1)[0]; if (removed && removed.type === "image") drawingImageCache.delete(removed.id); if (removed && removed.id === selectedDrawingId) selectedDrawingId = null; refresh(); }
       }
       return;
     }
@@ -1397,6 +1491,20 @@
 
     if (/^move-/.test(activeDrawing.type) && !activeDrawing.armed) return; // nur auswählen, nichts verschieben
 
+    if (activeDrawing.type === "move-image" || activeDrawing.type === "move-resize-image") {
+      const d = drawings.find((x) => x.id === activeDrawing.id && x.type === "image");
+      if (!d) return;
+      activeDrawing.changed = true;
+      const dx = p.x - activeDrawing.dx, dy = p.y - activeDrawing.dy;
+      if (activeDrawing.type === "move-image") {
+        d.x1 = activeDrawing.original.x1 + dx; d.y1 = activeDrawing.original.y1 + dy;
+        d.x2 = activeDrawing.original.x2 + dx; d.y2 = activeDrawing.original.y2 + dy;
+      } else {
+        d.x2 = Math.max(d.x1 + scr(40), activeDrawing.original.x2 + dx);
+        d.y2 = Math.max(d.y1 + scr(40), activeDrawing.original.y2 + dy);
+      }
+      draw(); return;
+    }
     if (activeDrawing.type === "move-measure") {
       const m = measures.find((x) => x.id === activeDrawing.id);
       if (!m || m.locked) return;
@@ -1464,6 +1572,10 @@
       return;
     }
 
+    if (a.type === "move-image" || a.type === "move-resize-image") {
+      if (a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); }
+      endGesture(); draw(); return;
+    }
     if (a.type === "move-measure" || a.type === "move-endpoint") {
       if (a.moved) {
         if (a.changed) { pushHistory(preSnap); scheduleAutosave(); }

@@ -77,6 +77,11 @@
           <button class="tool" data-tool="text" type="button">T Text</button>
           <button class="tool" data-tool="eraser" type="button">⌫ Lösch</button>
         </div>
+        <div class="button-row image-tools">
+          <button id="insertImageButton" class="secondary" type="button">🖼 Bild einfügen / zuschneiden</button>
+          <input id="insertImageInput" type="file" accept="image/*" hidden>
+        </div>
+        <p class="hint">Bild auswählen, Ausschnitt einstellen und einfügen. Eingefügte Bilder lassen sich mit „Auswählen“ verschieben und an der unteren rechten Ecke skalieren.</p>
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
           <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
@@ -135,6 +140,25 @@
   <footer>FotoMaß · Maße vor Fertigung vor Ort prüfen.</footer>
 
   <!-- Text-Dialog -->
+  <div id="imageCropDialog" class="dialog" hidden>
+    <div class="dialog-box wide crop-box">
+      <h2>Bild zuschneiden</h2>
+      <p class="hint">Mit den Reglern den gewünschten Ausschnitt wählen. Danach wird das Bild ins Aufmaß eingefügt.</p>
+      <canvas id="cropPreviewCanvas" class="crop-preview" width="600" height="400"></canvas>
+      <div class="crop-controls">
+        <label>Links <input id="cropLeft" type="range" min="0" max="40" value="0"></label>
+        <label>Rechts <input id="cropRight" type="range" min="0" max="40" value="0"></label>
+        <label>Oben <input id="cropTop" type="range" min="0" max="40" value="0"></label>
+        <label>Unten <input id="cropBottom" type="range" min="0" max="40" value="0"></label>
+      </div>
+      <div class="dialog-actions">
+        <button id="cropCancel" class="secondary" type="button">Abbrechen</button>
+        <button id="cropReset" class="secondary" type="button">Zurücksetzen</button>
+        <button id="cropInsert" type="button">Ausschnitt einfügen</button>
+      </div>
+    </div>
+  </div>
+
   <div id="textDialog" class="dialog" hidden>
     <div class="dialog-box">
       <label for="textDialogInput">Beschriftung</label>

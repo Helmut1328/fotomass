@@ -1,21 +1,18 @@
-# FotoMaß – Version 3: Referenzmaße
+# FotoMaß – Version 4
 
-Smartphone-optimierte Foto-Aufmaß-App für GitHub Pages.
+Smartphone-Aufmaß für Schreinerarbeiten und private Projekte.
 
 ## Dateien
-Alle neun Laufzeitdateien müssen im gleichen GitHub-Pages-Verzeichnis liegen:
-`index.html`, `style.css`, `app.js`, `speech.js`, `storage.js`, `service-worker.js`, `manifest.json`, `apple-touch-icon.png`, `icon-512.png`.
+Alle neun App-Dateien in dasselbe GitHub-Pages-Verzeichnis legen: `index.html`, `style.css`, `app.js`, `speech.js`, `storage.js`, `service-worker.js`, `manifest.json`, `apple-touch-icon.png`, `icon-512.png`.
 
-## Referenzmaß verwenden
-1. Foto öffnen.
-2. Werkzeug **⚖ Referenz** wählen und die bekannte Strecke auf dem Foto zeichnen.
-3. Den bekannten echten Wert samt Einheit eingeben, z. B. `600 mm`.
-4. Werkzeug **＋ Maß** wählen und weitere Strecken in derselben Bildebene zeichnen. FotoMaß berechnet den Wert automatisch.
-5. Automatisch berechnete Werte sind in der Maßliste mit **berechnet** markiert. Doppeltippen oder die Zahl in der Liste ändern macht den Wert zu einem manuellen Wert.
-6. Wird die Länge der Referenzlinie geändert, werden automatisch berechnete Werte aktualisiert.
+## Neu in Version 4
+- Detailbild aus Kamera/Galerie-Dateien einfügen.
+- Vor dem Einfügen Bildränder über vier Regler zuschneiden.
+- Eingefügtes Bild mit „Auswählen“ antippen und dann verschieben; die untere rechte Ecke zum Skalieren ziehen.
+- Bilder werden als Teil der Zeichnungsdaten gespeichert, erscheinen im exportierten Maßbild und werden in Projektdateien mitgespeichert.
 
-## Grenzen
-Die Referenzberechnung verwendet ein einfaches Pixelverhältnis. Sie ist für eine annähernd frontal fotografierte, ebene Fläche gedacht. Sie korrigiert keine Perspektive und ist nicht zuverlässig für Strecken in unterschiedlichen Tiefen oder auf verschiedenen Ebenen. Winkel werden weiterhin geometrisch aus drei Bildpunkten berechnet und nicht über den Maßstab skaliert.
+## Weiterhin enthalten
+Manuelle Maßlinien, Referenzmaßberechnung für annähernd frontale ebene Flächen, Winkelbemaßung, Textfläche ein/aus, Freihand, Linien, Rechtecke, Text, Rückgängig/Wiederholen, automatische Speicherung, Projektimport/-export und Originalfoto-Export.
 
-## Version
-Projektdateiformat 10. Der Service-Worker-Cache wurde auf `fotomass-v11` erhöht.
+## Hinweis
+Bilder werden beim Einfügen auf maximal 1400 Pixel lange Seite verkleinert, um den Browser-Speicher zu schonen. Nur JPEG/PNG/WebP-Daten werden in Projektdateien übernommen. Die Funktion muss nach dem Upload auf dem echten iPhone getestet werden, insbesondere Speichern, Skalieren, Undo/Redo und Export.
