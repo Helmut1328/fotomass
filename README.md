@@ -1,23 +1,21 @@
-# FotoMaß – Smartphone-Aufmaß
+# FotoMaß – Version 3: Referenzmaße
 
-Dateien (alle in dasselbe GitHub-Pages-Verzeichnis legen):
-`index.html`, `style.css`, `app.js`, `speech.js`, `storage.js`, `service-worker.js`, `manifest.json`, `apple-touch-icon.png`, `icon-512.png`
+Smartphone-optimierte Foto-Aufmaß-App für GitHub Pages.
 
-## Bedienung
-1. 📷 Kamera oder 🖼 Galerie
-2. Werkzeug „＋ Maß“, Linie ziehen → **das Wert-Feld öffnet sich sofort** (tippen, 🎤 oder iPhone-Diktat)
-3. Zoom: +/− oder zwei Finger · Fadenkreuz optional
-4. **🖼 In Galerie (2 Fotos)**: Vorschau mit Original + Bild mit Maßen → „Beide in Fotos sichern“ → im Menü „2 Bilder sichern“
-5. **📁 In Dateien sichern**: Projekt-Datei (`.fotomass.json`) im Teilen-Menü „In Dateien sichern“ ablegen; später „📂 Projekt-Datei öffnen“
-6. Auswählen-Werkzeug: Doppel-Tipp = Wert ändern · lang drücken = Menü (Wert, 🎤, Farbe, Duplizieren, Löschen)
+## Dateien
+Alle neun Laufzeitdateien müssen im gleichen GitHub-Pages-Verzeichnis liegen:
+`index.html`, `style.css`, `app.js`, `speech.js`, `storage.js`, `service-worker.js`, `manifest.json`, `apple-touch-icon.png`, `icon-512.png`.
 
-## Sprache
-- Versteht „zwölfhundert“, „zweitausendeinhundertvierunddreißig“, „eins zwei drei vier“, „zwölf Komma fünf“, „120 Zentimeter“ (setzt die Einheit mit)
-- Befehle: „OK / fertig“ übernimmt, „abbrechen“ schließt, „löschen“ leert
-- Option „automatisch übernehmen“ und „🎤 sofort starten“ im Dialog
-- Am iPhone funktioniert Sprache nur in Safari (nicht als Home-Bildschirm-App) und mit aktivierter Diktierfunktion. Alternative: Dialog-Link „⌨ Text-Tastatur“ und das Mikrofon der iPhone-Tastatur nutzen – das Wort „zwölfhundert“ wird beim Übernehmen in 1200 umgewandelt.
+## Referenzmaß verwenden
+1. Foto öffnen.
+2. Werkzeug **⚖ Referenz** wählen und die bekannte Strecke auf dem Foto zeichnen.
+3. Den bekannten echten Wert samt Einheit eingeben, z. B. `600 mm`.
+4. Werkzeug **＋ Maß** wählen und weitere Strecken in derselben Bildebene zeichnen. FotoMaß berechnet den Wert automatisch.
+5. Automatisch berechnete Werte sind in der Maßliste mit **berechnet** markiert. Doppeltippen oder die Zahl in der Liste ändern macht den Wert zu einem manuellen Wert.
+6. Wird die Länge der Referenzlinie geändert, werden automatisch berechnete Werte aktualisiert.
 
-## Speichern
-- Automatischer Zwischenspeicher (überlebt Neuladen, z. B. nach der Kamera)
-- „Im Browser speichern“: mehrere Projekte (IndexedDB) mit Vorschaubild
-- Projekt-Datei: Backup/Weitergabe, enthält Foto + alle Maße und Zeichnungen
+## Grenzen
+Die Referenzberechnung verwendet ein einfaches Pixelverhältnis. Sie ist für eine annähernd frontal fotografierte, ebene Fläche gedacht. Sie korrigiert keine Perspektive und ist nicht zuverlässig für Strecken in unterschiedlichen Tiefen oder auf verschiedenen Ebenen. Winkel werden weiterhin geometrisch aus drei Bildpunkten berechnet und nicht über den Maßstab skaliert.
+
+## Version
+Projektdateiformat 10. Der Service-Worker-Cache wurde auf `fotomass-v11` erhöht.

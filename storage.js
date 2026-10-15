@@ -12,7 +12,7 @@
   const DB_VERSION = 2;
   const STORE_P = "projects";
   const STORE_PH = "photos";
-  const FORMAT_VERSION = 9;          // Projektformat (siehe parseProject / migrate)
+  const FORMAT_VERSION = 10;          // Projektformat (siehe parseProject / migrate)
   const TRASH_DAYS = 30;
   const UNITS = [" mm", " cm", " m", "°"];
 
@@ -158,7 +158,9 @@
         id: isNum(m.id) ? m.id : 100000 + i,
         x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2,
         x3: isNum(m.x3) ? m.x3 : undefined, y3: isNum(m.y3) ? m.y3 : undefined,
-        type: m.type === "angle" && isNum(m.x3) && isNum(m.y3) ? "angle" : "linear",
+        type: m.type === "angle" && isNum(m.x3) && isNum(m.y3) ? "angle" : (m.type === "reference" ? "reference" : "linear"),
+        isReference: m.isReference === true || m.type === "reference",
+        autoCalculated: m.autoCalculated === true,
         value: cleanValue(m.value), unit: unitOr(m.unit), color: colorOr(m.color), textBg: m.textBg !== false,
         label: cleanText(m.label, 40), locked: m.locked === true
       }));

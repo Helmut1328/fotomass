@@ -17,3 +17,16 @@
 7. Exportbild prüfen: keine blauen Auswahlgriffe, Winkel und Textfläche korrekt.
 
 Hinweis: Winkel werden geometrisch aus den drei Punkten im Foto berechnet. Das ist ein Bildwinkel, kein automatisch perspektivkorrigierter realer Winkel.
+
+
+## Version 3: Referenzmaß
+1. Ein Foto mit einer möglichst frontal aufgenommenen Fläche öffnen (z. B. Schrankfront).
+2. „⚖ Referenz“ wählen.
+3. Eine Strecke zeichnen, deren echtes Maß sicher bekannt ist, z. B. 600 mm.
+4. Den tatsächlichen Wert eingeben und übernehmen. Die Referenzlinie wird mit „REF“ markiert.
+5. „＋ Maß“ wählen und weitere Strecken in derselben Fläche zeichnen. Der Wert wird automatisch berechnet und in der Maßliste mit „berechnet“ gekennzeichnet.
+6. Eine berechnete Linie doppelt antippen oder ihren Wert in der Liste ändern, wenn du ihn manuell korrigieren möchtest. Nach manueller Änderung bleibt dieser Wert manuell.
+7. Den Endpunkt der Referenzlinie verschieben: automatisch berechnete Werte müssen sich entsprechend aktualisieren.
+8. Projekt sichern, erneut öffnen und kontrollieren, dass Referenz und berechnete Kennzeichnungen erhalten bleiben. Exportbild ebenfalls prüfen.
+
+**Wichtige Einschränkung:** Der Maßstab gilt nur für Strecken auf derselben ebenen Fläche und bei annähernd gleicher Perspektive. Bei schrägen Fotos, Perspektivverzerrung oder Bauteilen in unterschiedlicher Tiefe sind berechnete Werte nur Näherungen. Winkelmaße werden nicht über das Referenzmaß skaliert.

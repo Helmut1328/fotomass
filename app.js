@@ -242,7 +242,7 @@
       anglePoints.forEach(pt => { g.beginPath(); g.arc(pt.x,pt.y,4*k,0,Math.PI*2); g.fill(); }); g.restore();
     }
     if (activeDrawing && !/^(move-|text-place|angle-point)/.test(activeDrawing.type)) {
-      if (activeDrawing.type === "measure") drawMeasurePreview(g, activeDrawing, k);
+      if (activeDrawing.type === "measure" || activeDrawing.type === "reference") drawMeasurePreview(g, activeDrawing, k);
       else drawShape(g, activeDrawing, k);
     }
     if (snapPoint) {
@@ -298,7 +298,7 @@
       g.fill();
     });
 
-    const label = `${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
+    const label = `${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
     g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
     const tw = g.measureText(label).width;
     const th = fs + 6 * k;
@@ -509,7 +509,7 @@
       const title = document.createElement("button");
       title.type = "button";
       title.className = "secondary";
-      title.textContent = `${m.locked ? "🔒 " : ""}${m.type === "angle" ? "Winkel" : "Maß"} ${index + 1}`;
+      title.textContent = `${m.locked ? "🔒 " : ""}${m.isReference ? "Referenz" : (m.type === "angle" ? "Winkel" : "Maß")} ${index + 1}${m.autoCalculated ? " · berechnet" : ""}`;
       title.addEventListener("click", () => { selectedId = m.id; $("textBgToggle").checked = m.textBg !== false; setTool("select"); renderMeasureList(); draw(); });
 
       const input = document.createElement("input");
@@ -524,6 +524,8 @@
         const p = speech.parseNumber(input.value, { typed: true });
         m.value = p.value;
         if (p.unit) m.unit = p.unit;
+        m.autoCalculated = false;
+        if (m.isReference) { calculateEmptyMeasuresFromReference(); }
         refresh();
       });
 
@@ -565,7 +567,40 @@
     if (tool === "angle" && name !== "angle" && anglePoints.length) { anglePoints = []; draw(); }
     tool = name;
     document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
+    if ((name === "measure" || name === "reference") && unitSelect.value === "°") unitSelect.value = " mm";
     if (name === "angle") setStatus("Winkel: dreimal tippen – Scheitelpunkt, erster Schenkel, zweiter Schenkel.");
+    if (name === "reference") setStatus("Referenzmaß: bekannte Strecke ziehen und echten Wert eingeben. Es gilt für dieselbe Bildebene.");
+  }
+
+  // ---------- Referenzmaß / Maßstab ----------
+  const unitFactorMm = (unit) => ({ " mm": 1, " cm": 10, " m": 1000 })[unit] || 1;
+  const referenceMeasure = () => measures.find((m) => m.isReference && Number(String(m.value).replace(",", ".")) > 0 && m.type !== "angle");
+  function calculatedValueFor(m, unit) {
+    const ref = referenceMeasure();
+    if (!ref || m === ref) return null;
+    const refPx = Math.hypot(ref.x2 - ref.x1, ref.y2 - ref.y1);
+    const px = Math.hypot(m.x2 - m.x1, m.y2 - m.y1);
+    const refValue = Number(String(ref.value).replace(",", "."));
+    if (!(refPx > 0) || !(px >= 0) || !(refValue > 0)) return null;
+    const lengthMm = (px / refPx) * refValue * unitFactorMm(ref.unit);
+    return (lengthMm / unitFactorMm(unit || " mm")).toFixed(1).replace(/\.0$/, "");
+  }
+  function recalculateAutomaticMeasures() {
+    measures.forEach((m) => {
+      if (m.type !== "angle" && !m.isReference && m.autoCalculated) {
+        const value = calculatedValueFor(m, m.unit || unitSelect.value);
+        if (value !== null) m.value = value;
+      }
+    });
+  }
+  function calculateEmptyMeasuresFromReference() {
+    measures.forEach((m) => {
+      if (m.type !== "angle" && !m.isReference && !String(m.value || "").trim()) {
+        const value = calculatedValueFor(m, m.unit || unitSelect.value);
+        if (value !== null) { m.value = value; m.autoCalculated = true; }
+      }
+    });
+    recalculateAutomaticMeasures();
   }
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
@@ -1063,7 +1098,7 @@
     if (m.locked) { toast("🔒 Gesperrt – erst entsperren (lang drücken › Entsperren)."); return; }
     dlg.id = measureId;
     dlg.isNew = !!opts.isNew;
-    $("valueDialogTitle").textContent = `${m.type === "angle" ? "Winkel" : "Maß"} ${measures.indexOf(m) + 1} – Wert`;
+    $("valueDialogTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1} – Wert`;
     vInput.value = fmt(m.value);
     vUnit.value = m.unit || " mm";
     vInput.inputMode = "decimal";
@@ -1098,6 +1133,18 @@
       if (!dlg.isNew) remember(); // neue Linie: Rückgängig entfernt Linie samt Wert in einem Schritt
       m.value = p.value;
       m.unit = p.unit || vUnit.value || " mm";
+      if (m.isReference || m.type === "reference") {
+        m.isReference = true;
+        m.type = "reference";
+        // Pro Projekt gibt es eine aktive Referenz. Ältere Referenzlinien bleiben als normale Maßlinien sichtbar.
+        measures.forEach((other) => { if (other.id !== m.id && other.isReference) { other.isReference = false; other.type = "linear"; } });
+        if (!(Number(String(m.value).replace(",", ".")) > 0)) setStatus("Referenzwert muss größer als 0 sein.");
+        else { calculateEmptyMeasuresFromReference(); setStatus("Referenzmaß gesetzt. Neue Maßlinien werden für dieselbe Bildebene berechnet."); }
+      } else {
+        // Sobald ein berechneter Wert manuell geändert wird, bleibt er ein manueller Wert.
+        m.autoCalculated = false;
+        recalculateAutomaticMeasures();
+      }
       refresh();
     }
     closeValueDialog();
@@ -1131,7 +1178,7 @@
     actionMeasureId = id;
     actionColorRemembered = false;
     selectedId = id;
-    $("actionTitle").textContent = `Maß ${measures.indexOf(m) + 1}: ${m.value ? fmt(m.value) + (m.unit || "") : "kein Wert"}`;
+    $("actionTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1}: ${m.value ? fmt(m.value) + (m.unit || "") : "kein Wert"}`;
     $("actColor").value = m.color || "#ff3b30";
     syncActionLock(m);
     renderMeasureList(); draw();
@@ -1168,6 +1215,7 @@
     remember();
     const off = scr(40);
     const copy = Object.assign({}, m, { locked: false, id: nextId++, x1: m.x1 + off, y1: m.y1 + off, x2: m.x2 + off, y2: m.y2 + off, ...(m.type === "angle" ? { x3: m.x3 + off, y3: m.y3 + off } : {}) });
+    if (copy.isReference) { copy.isReference = false; copy.type = "linear"; copy.autoCalculated = false; }
     measures.push(copy);
     selectedId = copy.id;
     closeActionDialog();
@@ -1200,7 +1248,20 @@
   });
   unitSelect.addEventListener("change", () => {
     const m = measures.find((x) => x.id === selectedId);
-    if (m) { remember(); m.unit = unitSelect.value; refresh(); }
+    if (m) {
+      remember();
+      const nextUnit = unitSelect.value;
+      if (m.isReference) {
+        const n = Number(String(m.value).replace(",", "."));
+        if (Number.isFinite(n) && n > 0) m.value = String(Number((n * unitFactorMm(m.unit) / unitFactorMm(nextUnit)).toFixed(3)));
+        m.unit = nextUnit;
+        calculateEmptyMeasuresFromReference();
+      } else {
+        m.unit = nextUnit;
+        if (m.autoCalculated) { const value = calculatedValueFor(m, m.unit); if (value !== null) m.value = value; }
+      }
+      refresh();
+    }
   });
   fontSizeInput.addEventListener("input", () => { draw(); scheduleAutosave(); });
   $("textBgToggle").addEventListener("change", () => {
@@ -1292,7 +1353,7 @@
       return;
     }
 
-    if (tool === "measure") {
+    if (tool === "measure" || tool === "reference") {
       const sn = findSnap(p);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
     }
@@ -1355,10 +1416,12 @@
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
       if (activeDrawing.endpoint === 1) { m.x1 = p.x; m.y1 = p.y; } else if (activeDrawing.endpoint === 3 && m.type === "angle") { m.x3 = p.x; m.y3 = p.y; } else { m.x2 = p.x; m.y2 = p.y; }
       if (m.type === "angle") m.value = (Math.abs(angleRadians(m))*180/Math.PI).toFixed(1);
+      else if (m.autoCalculated) { const value = calculatedValueFor(m, m.unit); if (value !== null) m.value = value; }
+      if (m.isReference) recalculateAutomaticMeasures();
       draw();
       return;
     }
-    if (activeDrawing.type === "measure") {
+    if (activeDrawing.type === "measure" || activeDrawing.type === "reference") {
       const sn = findSnap(p);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
     }
@@ -1419,15 +1482,21 @@
     }
 
     // Zu kurze Linien verwerfen
-    if ((a.type === "line" || a.type === "measure") && dist({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }) < scr(8)) {
+    if ((a.type === "line" || a.type === "measure" || a.type === "reference") && dist({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }) < scr(8)) {
       endGesture(); draw();
       return;
     }
 
     pushHistory(preSnap);
     let newMeasureId = null;
-    if (a.type === "measure") {
-      measures.push({ id: a.id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked });
+    if (a.type === "measure" || a.type === "reference") {
+      const isRef = a.type === "reference";
+      const m = { id: a.id, type: isRef ? "reference" : "linear", isReference: isRef, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked, autoCalculated: false };
+      if (!isRef) {
+        const value = calculatedValueFor(m, m.unit);
+        if (value !== null) { m.value = value; m.autoCalculated = true; }
+      }
+      measures.push(m);
       selectedId = a.id;
       newMeasureId = a.id;
     } else {
@@ -1435,8 +1504,12 @@
     }
     endGesture();
     refresh();
-    // Maßlinie fertig -> sofort das Feld für den Wert öffnen
-    if (newMeasureId !== null) openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
+    // Referenzlinie benötigt den bekannten echten Wert; normale Linien fragen nur dann nach, wenn kein Maßstab existiert.
+    if (newMeasureId !== null) {
+      const created = measures.find((m) => m.id === newMeasureId);
+      if (created && (created.isReference || !created.autoCalculated)) openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
+      else setStatus(`Berechnet: ${fmt(created.value)}${created.unit || " mm"}. Doppel-Tipp zum manuellen Ändern.`);
+    }
   }
 
   function onPointerCancel(e) { // z. B. System-Geste: nichts übernehmen
