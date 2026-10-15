@@ -18,3 +18,7 @@ Manuelle Maßlinien, Endpunkte bearbeiten, Maßwert ändern, Winkelbemaßung, Re
 - Die Referenzmessung ist eine Näherung für annähernd frontale, ebene Flächen; Perspektive kann Ergebnisse verfälschen.
 - Zusatzbilder werden beim Einfügen verkleinert, um den Browser-Speicher zu schonen.
 - JavaScript-Syntax und Paketstruktur wurden geprüft. Ein vollständiger Funktionstest im echten iPhone-Browser war nicht möglich; bitte die Testanleitung nach dem Upload ausführen.
+
+
+## V5.1 – Text nachträglich bearbeiten
+Im Auswahlwerkzeug einen freien Text antippen und danach erneut antippen, um den Textdialog zu öffnen. Dort Wortlaut, Schriftgröße, Farbe und weißen Texthintergrund ändern. Einen ausgewählten Text durch Ziehen verschieben. Änderungen werden gespeichert und in den Export übernommen.

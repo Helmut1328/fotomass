@@ -462,3 +462,10 @@ body { padding-top: 0; }
 .crop-controls label { display: grid; gap: 3px; font-size: .9rem; }
 .crop-controls input { width: 100%; min-width: 0; }
 @media (max-width: 420px) { .crop-controls { grid-template-columns: 1fr; } }
+
+/* V5.1: Eigenschaften für frei eingefügte Textobjekte */
+.text-edit-options { display: grid; grid-template-columns: 1fr; gap: 7px; margin: 12px 0 6px; }
+.text-edit-options input[type="range"] { width: 100%; min-height: 32px; }
+.text-edit-options input[type="color"] { width: 100%; height: 40px; border: 0; background: transparent; padding: 0; }
+.text-edit-options .inline-check { display: flex; align-items: center; gap: 9px; }
+.text-edit-options .inline-check input { width: 20px; height: 20px; }

@@ -25,6 +25,11 @@
   const zoomLabel = $("zoomLabel");
   const textDialog = $("textDialog");
   const textDialogInput = $("textDialogInput");
+  const textDialogSize = $("textDialogSize");
+  const textDialogColor = $("textDialogColor");
+  const textDialogBg = $("textDialogBg");
+  const textDialogTitle = $("textDialogTitle");
+  let editingTextId = null;
   const valueDialog = $("valueDialog");
   const vInput = $("valueDialogInput");
   const vUnit = $("valueDialogUnit");
@@ -242,11 +247,20 @@
     g.drawImage(baseCanvas, 0, 0);
     drawings.forEach((d) => drawShape(g, d, k));
     if (!forExport && selectedDrawingId) {
-      const sd = drawings.find((d) => d.id === selectedDrawingId && d.type === "image");
+      const sd = drawings.find((d) => d.id === selectedDrawingId && (d.type === "image" || d.type === "text"));
       if (sd) {
         g.save(); g.strokeStyle = "#1682d5"; g.lineWidth = scr(2); g.setLineDash([scr(5), scr(4)]);
-        g.strokeRect(sd.x1, sd.y1, sd.x2 - sd.x1, sd.y2 - sd.y1); g.setLineDash([]);
-        drawHandle(g, sd.x2, sd.y2); g.restore();
+        if (sd.type === "image") {
+          g.strokeRect(sd.x1, sd.y1, sd.x2 - sd.x1, sd.y2 - sd.y1);
+          g.setLineDash([]); drawHandle(g, sd.x2, sd.y2);
+        } else {
+          const fs = (sd.fontSize || getFontSize() + 4) * k;
+          g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
+          const tw = g.measureText(sd.text || "Notiz").width;
+          const pad = scr(8);
+          g.strokeRect(sd.x1-pad, sd.y1-fs-pad, tw+pad*2, fs+pad*2);
+        }
+        g.restore();
       }
     }
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
@@ -436,10 +450,15 @@
     } else if (d.type === "rect") {
       g.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
     } else if (d.type === "text") {
-      g.font = `bold ${(d.fontSize || getFontSize() + 4) * k}px system-ui, -apple-system, sans-serif`;
+      const fs = (d.fontSize || getFontSize() + 4) * k;
+      g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
       g.textAlign = "left";
       g.textBaseline = "alphabetic";
-      g.fillText(d.text || "Notiz", d.x1, d.y1);
+      const label = d.text || "Notiz";
+      const tw = g.measureText(label).width;
+      if (d.textBg) { g.fillStyle = "rgba(255,255,255,0.94)"; g.fillRect(d.x1-scr(4), d.y1-fs-scr(3), tw+scr(8), fs+scr(7)); }
+      g.fillStyle = d.color || colorInput.value;
+      g.fillText(label, d.x1, d.y1);
     }
     g.restore();
   }
@@ -1072,27 +1091,40 @@
     }
   }, true);
 
-  // ---------- Text-Dialog ----------
-  function openTextDialog(point) {
-    pendingTextPoint = point;
-    textDialogInput.value = "";
+  // ---------- Text-Dialog: neu anlegen und nachträglich bearbeiten ----------
+  function openTextDialog(point, textObject) {
+    editingTextId = textObject ? textObject.id : null;
+    pendingTextPoint = point || null;
+    textDialogTitle.textContent = textObject ? "Text bearbeiten" : "Beschriftung";
+    textDialogInput.value = textObject ? (textObject.text || "") : "";
+    textDialogSize.value = String(textObject ? (textObject.fontSize || getFontSize()+4) : (getFontSize()+4));
+    textDialogColor.value = textObject ? (textObject.color || colorInput.value) : colorInput.value;
+    textDialogBg.checked = textObject ? !!textObject.textBg : false;
+    $("textDialogOk").textContent = textObject ? "Änderungen übernehmen" : "Text einfügen";
     showDialog(textDialog);
     pendingFocus = "text";
     setTimeout(() => textDialogInput.focus(), 60);
   }
-  function closeTextDialog() { closeDialog(textDialog); pendingTextPoint = null; }
+  function closeTextDialog() { closeDialog(textDialog); pendingTextPoint = null; editingTextId = null; $("textDialogOk").textContent = "Text einfügen"; }
   $("textDialogCancel").addEventListener("click", closeTextDialog);
   $("textDialogOk").addEventListener("click", () => {
     const txt = textDialogInput.value.trim();
-    if (txt && pendingTextPoint) {
+    if (txt && editingTextId !== null) {
+      const d = drawings.find((x) => x.id === editingTextId && x.type === "text");
+      if (d) {
+        remember(); d.text = txt; d.fontSize = Number(textDialogSize.value) || 28;
+        d.color = textDialogColor.value || "#ff3b30"; d.textBg = textDialogBg.checked;
+        selectedDrawingId = d.id; selectedId = null; refresh();
+      }
+    } else if (txt && pendingTextPoint) {
       remember();
-      drawings.push({ id: nextId++, type: "text", x1: pendingTextPoint.x, y1: pendingTextPoint.y, text: txt, color: colorInput.value, width: Number(widthInput.value), fontSize: getFontSize() + 4 });
-      refresh();
+      const d = { id: nextId++, type: "text", x1: pendingTextPoint.x, y1: pendingTextPoint.y, text: txt, color: textDialogColor.value || colorInput.value, width: Number(widthInput.value), fontSize: Number(textDialogSize.value) || getFontSize()+4, textBg: textDialogBg.checked };
+      drawings.push(d); selectedDrawingId = d.id; selectedId = null; refresh();
     }
-    closeTextDialog();
+    closeTextDialog(); draw();
   });
   textDialogInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") $("textDialogOk").click();
+    if (e.key === "Enter") { e.preventDefault(); $("textDialogOk").click(); }
     if (e.key === "Escape") closeTextDialog();
   });
 
@@ -1444,6 +1476,11 @@
           const resizeHit = wasSelected && dist(p, {x:imageDrawing.x2, y:imageDrawing.y2}) < scr(30);
           activeDrawing = { type: resizeHit ? "move-resize-image" : "move-image", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:{x1:imageDrawing.x1,y1:imageDrawing.y1,x2:imageDrawing.x2,y2:imageDrawing.y2} };
           cancelLongPress();
+        } else if (imageDrawing && imageDrawing.type === "text") {
+          const wasSelected = selectedDrawingId === imageDrawing.id;
+          selectedDrawingId = imageDrawing.id;
+          activeDrawing = { type: "move-text", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:{x1:imageDrawing.x1,y1:imageDrawing.y1} };
+          cancelLongPress();
         } else { selectedDrawingId = null; }
       }
       $("textBgToggle").checked = selectedId ? (measures.find(x => x.id === selectedId)?.textBg !== false) : true;
@@ -1519,6 +1556,14 @@
 
     if (/^move-/.test(activeDrawing.type) && !activeDrawing.armed) return; // nur auswählen, nichts verschieben
 
+    if (activeDrawing.type === "move-text") {
+      const d = drawings.find((x) => x.id === activeDrawing.id && x.type === "text");
+      if (!d) return;
+      activeDrawing.changed = true;
+      d.x1 = activeDrawing.original.x1 + (p.x-activeDrawing.dx);
+      d.y1 = activeDrawing.original.y1 + (p.y-activeDrawing.dy);
+      draw(); return;
+    }
     if (activeDrawing.type === "move-image" || activeDrawing.type === "move-resize-image") {
       const d = drawings.find((x) => x.id === activeDrawing.id && x.type === "image");
       if (!d) return;
@@ -1608,6 +1653,11 @@
       return;
     }
 
+    if (a.type === "move-text") {
+      if (a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); endGesture(); draw(); }
+      else { const d = drawings.find((x) => x.id === a.id && x.type === "text"); endGesture(); draw(); if (d && a.armed && selectedDrawingId === d.id) openTextDialog(null, d); }
+      return;
+    }
     if (a.type === "move-image" || a.type === "move-resize-image") {
       if (a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); }
       endGesture(); draw(); return;

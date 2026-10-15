@@ -161,8 +161,15 @@
 
   <div id="textDialog" class="dialog" hidden>
     <div class="dialog-box">
-      <label for="textDialogInput">Beschriftung</label>
+      <label for="textDialogInput" id="textDialogTitle">Beschriftung</label>
       <input id="textDialogInput" type="text" maxlength="80" placeholder="z. B. Korpus neu">
+      <div class="text-edit-options">
+        <label for="textDialogSize">Schriftgröße</label>
+        <input id="textDialogSize" type="range" min="12" max="96" step="1" value="28">
+        <label for="textDialogColor">Textfarbe</label>
+        <input id="textDialogColor" type="color" value="#ff3b30">
+        <label class="inline-check" for="textDialogBg"><input id="textDialogBg" type="checkbox" checked> Weißer Texthintergrund</label>
+      </div>
       <div class="dialog-actions">
         <button id="textDialogCancel" class="secondary" type="button">Abbrechen</button>
         <button id="textDialogOk" type="button">OK</button>
