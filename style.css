@@ -286,13 +286,13 @@ input[type=checkbox] {
   accent-color: var(--accent);
 }
 select {
-  font-size: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   color: var(--ink);
   padding: 5px 6px;
   font: inherit;
+  font-size: 16px; /* verhindert Auto-Zoom auf dem iPhone */
 }
 
 .measure-list { display: grid; gap: 7px; }
@@ -423,3 +423,28 @@ button.big { width: 100%; min-height: 52px; font-size: 1.05rem; }
   main { padding: 12px; }
   .tool-grid { grid-template-columns: repeat(7, 1fr); }
 }
+
+/* Speicherstatus */
+.save-badge { font-size: .8rem; font-weight: 700; margin-left: auto; margin-right: 4px; white-space: nowrap; }
+.save-badge[data-state="saved"] { color: #7ee2a0; }
+.save-badge[data-state="pending"] { color: #ffd479; }
+.save-badge[data-state="error"] { color: #fff; background: #d32f2f; padding: 3px 8px; border-radius: 8px; }
+
+/* Meldung unten (mit Aktion) */
+.toast {
+  position: fixed; left: 12px; right: 12px; bottom: calc(14px + env(safe-area-inset-bottom));
+  max-width: 520px; margin: 0 auto; z-index: 200;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: #17212b; color: #fff; padding: 10px 12px; border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); font-size: .9rem;
+}
+.toast[hidden] { display: none; }
+.toast button { min-height: 36px; background: #ffca28; color: #17212b; padding: 4px 12px; white-space: nowrap; }
+
+.project-row.current { outline: 2px solid var(--accent); }
+button:disabled.mic-btn, .measure-item input[readonly] { opacity: .55; }
+.button-row.action-row button { padding-left: 4px; padding-right: 4px; font-size: .88rem; }
+
+/* iPhone: Notch / Home-Indikator */
+.topbar { padding-top: max(10px, env(safe-area-inset-top)); padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+body { padding-top: 0; }

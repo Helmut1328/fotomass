@@ -17,6 +17,7 @@
 <body>
   <header class="topbar">
     <div><h1>FotoMaß</h1></div>
+    <span id="saveBadge" class="save-badge" data-state="idle" role="status" aria-live="polite"></span>
     <button id="styleToggle" class="secondary compact" type="button">Baustellenstil</button>
   </header>
 
@@ -93,8 +94,9 @@
       </div>
 
       <div class="button-row action-row">
-        <button id="undo" class="secondary" type="button" disabled>↶ Rückgängig</button>
-        <button id="clearAll" class="danger" type="button" disabled>Löschen</button>
+        <button id="undo" class="secondary" type="button" disabled>↶ Zurück</button>
+        <button id="redo" class="secondary" type="button" disabled>↷ Wieder</button>
+        <button id="clearAll" class="danger" type="button" disabled>Alles löschen</button>
       </div>
       <div class="button-row action-row">
         <button id="exportImage" type="button" disabled>🖼 In Galerie (2 Fotos)</button>
@@ -120,10 +122,10 @@
         <input id="projectFileInput" type="file" accept=".json,.fotomass,application/json,text/plain" hidden>
       </div>
       <div class="button-row" style="margin-top:8px">
-        <button id="saveProject" class="secondary" type="button" disabled>💾 Im Browser speichern</button>
-        <button id="loadProject" class="secondary" type="button">Browser-Projekte</button>
+        <button id="saveProject" class="secondary" type="button" disabled>💾 Jetzt sichern</button>
+        <button id="loadProject" class="secondary" type="button">📚 Projekte</button>
       </div>
-      <p id="saveStatus" class="hint">Die Arbeit wird automatisch zwischengespeichert. „In Dateien sichern“ legt eine Projekt-Datei ab, die du später wieder öffnen und weiter bearbeiten kannst.</p>
+      <p id="saveStatus" class="hint">Jede Änderung wird automatisch im Browser gesichert (Anzeige oben). Ein neues Foto legt ein neues Projekt an – das bisherige bleibt in „Projekte“. „In Dateien sichern“ erstellt zusätzlich ein Backup, das du später wieder öffnen kannst.</p>
     </section>
   </main>
 
@@ -175,6 +177,7 @@
         <button id="actValue" type="button">✏ Wert ändern</button>
         <button id="actMic" type="button">🎤 Wert sprechen</button>
         <label class="action-color">🎨 Farbe <input id="actColor" type="color" value="#ff3b30"></label>
+ <button id="actLock" class="secondary" type="button">🔒 Sperren</button>
         <button id="actDuplicate" class="secondary" type="button">⧉ Duplizieren</button>
         <button id="actDelete" class="danger" type="button">🗑 Löschen</button>
         <button id="actClose" class="secondary" type="button">Schließen</button>
@@ -187,7 +190,7 @@
     <div class="dialog-box wide">
       <label>Zwei Fotos sichern</label>
       <div class="preview-grid">
-        <figure><img id="prevOriginal" alt="Original"><figcaption>Original</figcaption></figure>
+        <figure><img id="prevOriginal" alt="Original"><figcaption id="capOriginal">Original</figcaption></figure>
         <figure><img id="prevAnnotated" alt="Mit Maßen"><figcaption>Mit Maßen</figcaption></figure>
       </div>
       <button id="saveShare" type="button" class="big">📲 Beide in Fotos sichern</button>
@@ -204,11 +207,32 @@
     <div class="dialog-box wide">
       <label>Projekte im Browser</label>
       <div id="projectsList" class="projects-list"></div>
+      <p id="storageInfo" class="hint"></p>
       <div class="dialog-actions">
+        <button id="trashToggle" class="secondary" type="button">🗑 Papierkorb</button>
         <button id="projectsClose" class="secondary" type="button">Schließen</button>
       </div>
     </div>
   </div>
+
+  <!-- Projekt-Datei sichern -->
+  <div id="projectFileDialog" class="dialog" hidden>
+    <div class="dialog-box wide">
+      <label>Projekt-Datei sichern</label>
+      <p id="projectFileInfo" class="hint">Datei wird vorbereitet …</p>
+      <div class="voice-options">
+        <label><input id="optWithOriginal" type="checkbox" checked> Originalfoto einschließen (größere Datei, vollständige Sicherung)</label>
+      </div>
+      <button id="projectFileShare" type="button" class="big" disabled>📁 In Dateien sichern</button>
+      <p class="hint">Im Menü „In Dateien sichern“ wählen und einen Ordner bestimmen.</p>
+      <div class="dialog-actions">
+        <button id="projectFileDownload" class="secondary" type="button" disabled>⬇ Herunterladen</button>
+        <button id="projectFileClose" class="secondary" type="button">Fertig</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
 
   <script src="speech.js"></script>
   <script src="storage.js"></script>

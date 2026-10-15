@@ -1,14 +1,42 @@
 /* FotoMaß – Speichermodul
- * - Projekte im Browser (IndexedDB, mehrere Projekte + Autosave)
- * - Projekt als Datei sichern (iPhone: Teilen-Menü › „In Dateien sichern“, sonst Download)
- * - Bilder teilen (iPhone: „Bilder sichern“ = Galerie)
+ * - Projekte in IndexedDB (Schlüssel = Projekt-ID, nie der Name)
+ * - Originalfoto getrennt und unverändert als Blob („photos“)
+ * - Papierkorb (deletedAt), Migration älterer Daten, Import-Validierung
+ * - Teilen/Download von Projekt-Dateien und Bildern
  */
 (function (root) {
   "use strict";
   const FM = (root.FM = root.FM || {});
+
   const DB_NAME = "fotomass";
-  const STORE = "projects";
-  const AUTOSAVE_KEY = "_autosave";
+  const DB_VERSION = 2;
+  const STORE_P = "projects";
+  const STORE_PH = "photos";
+  const FORMAT_VERSION = 9;          // Projektformat (siehe parseProject / migrate)
+  const TRASH_DAYS = 30;
+  const UNITS = [" mm", " cm", " m"];
+
+  // ---------- Hilfsfunktionen ----------
+  function newId() {
+    try { if (root.crypto && root.crypto.randomUUID) return root.crypto.randomUUID(); } catch (_) {}
+    return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  // Verständliche Meldung statt technischem Fehlernamen
+  function friendlyError(err) {
+    const name = (err && err.name) || "";
+    const msg = (err && err.message) || "";
+    if (name === "QuotaExceededError" || /quota/i.test(msg)) {
+      return "Speicher voll – bitte „In Dateien sichern“ nutzen und nicht mehr benötigte Projekte löschen.";
+    }
+    if (msg === "no-idb" || name === "SecurityError") {
+      return "Der Browser-Speicher ist nicht verfügbar (z. B. privater Modus) – bitte regelmäßig „In Dateien sichern“.";
+    }
+    if (name === "InvalidStateError" || name === "UnknownError") {
+      return "Der Browser-Speicher antwortet nicht – App neu öffnen. Bis dahin „In Dateien sichern“ nutzen.";
+    }
+    return "Speichern fehlgeschlagen (" + (name || "Fehler") + "). Bitte „In Dateien sichern“ nutzen.";
+  }
 
   // ---------- IndexedDB ----------
   let dbPromise = null;
@@ -16,37 +44,66 @@
     if (!dbPromise) {
       dbPromise = new Promise((resolve, reject) => {
         if (!root.indexedDB) return reject(new Error("no-idb"));
-        const req = root.indexedDB.open(DB_NAME, 1);
-        req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-        req.onsuccess = () => resolve(req.result);
+        let req;
+        try { req = root.indexedDB.open(DB_NAME, DB_VERSION); } catch (e) { return reject(e); }
+        req.onupgradeneeded = () => {
+          const d = req.result;
+          if (!d.objectStoreNames.contains(STORE_P)) d.createObjectStore(STORE_P);
+          if (!d.objectStoreNames.contains(STORE_PH)) d.createObjectStore(STORE_PH);
+        };
+        req.onsuccess = () => {
+          const d = req.result;
+          d.onversionchange = () => { d.close(); dbPromise = null; };
+          resolve(d);
+        };
         req.onerror = () => reject(req.error);
+        req.onblocked = () => reject(new Error("blocked"));
       });
       dbPromise.catch(() => { dbPromise = null; });
     }
     return dbPromise;
   }
-  function tx(mode, fn) {
+
+  // Führt fn(store) in einer Transaktion aus; löst erst nach „complete“ auf
+  // (dann ist wirklich geschrieben – Quota-Fehler kommen als abort).
+  function run(storeName, mode, fn) {
     return db().then((d) => new Promise((resolve, reject) => {
-      const t = d.transaction(STORE, mode);
-      const res = fn(t.objectStore(STORE));
-      t.oncomplete = () => resolve(res && "result" in res ? res.result : undefined);
+      let t, out;
+      try {
+        t = d.transaction(storeName, mode);
+        const req = fn(t.objectStore(storeName));
+        if (req) req.onsuccess = () => { out = req.result; };
+      } catch (e) { return reject(e); }
+      t.oncomplete = () => resolve(out);
       t.onerror = () => reject(t.error);
-      t.onabort = () => reject(t.error);
+      t.onabort = () => reject(t.error || new Error("abort"));
     }));
   }
-  const put = (key, value) => tx("readwrite", (s) => s.put(value, key));
-  const get = (key) => tx("readonly", (s) => s.get(key));
-  const del = (key) => tx("readwrite", (s) => s.delete(key));
 
-  function list() {
+  const putProject = (rec) => run(STORE_P, "readwrite", (s) => s.put(rec, rec.id));
+  const getProject = (id) => run(STORE_P, "readonly", (s) => s.get(id));
+  const putPhoto = (id, blob) => run(STORE_PH, "readwrite", (s) => s.put(blob, id));
+  const getPhoto = (id) => run(STORE_PH, "readonly", (s) => s.get(id));
+
+  function removeProject(id) { // endgültig
+    return run(STORE_P, "readwrite", (s) => s.delete(id)).then(() => run(STORE_PH, "readwrite", (s) => s.delete(id)));
+  }
+
+  // Alle Projekte als kleine Übersicht (ohne die großen Fotodaten zu behalten)
+  function listProjects() {
     return db().then((d) => new Promise((resolve, reject) => {
       const out = [];
-      const req = d.transaction(STORE, "readonly").objectStore(STORE).openCursor();
+      const req = d.transaction(STORE_P, "readonly").objectStore(STORE_P).openCursor();
       req.onsuccess = () => {
         const c = req.result;
         if (!c) return resolve(out.sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt))));
-        if (c.key !== AUTOSAVE_KEY && c.value) {
-          out.push({ key: c.key, name: c.value.projectName || c.key, savedAt: c.value.savedAt || "", thumb: c.value.thumb || "" });
+        const v = c.value;
+        if (v && typeof v.id === "string") {
+          out.push({
+            id: v.id, name: v.projectName || "Ohne Namen", savedAt: v.savedAt || "", created: v.created || "",
+            thumb: v.thumb || "", deletedAt: v.deletedAt || null,
+            nMeasures: Array.isArray(v.measures) ? v.measures.length : 0
+          });
         }
         c.continue();
       };
@@ -54,8 +111,133 @@
     }));
   }
 
+  async function estimate() {
+    try {
+      if (root.navigator.storage && root.navigator.storage.estimate) {
+        const e = await root.navigator.storage.estimate();
+        return { usage: e.usage || 0, quota: e.quota || 0 };
+      }
+    } catch (_) {}
+    return null;
+  }
+
   function requestPersistence() {
-    try { if (root.navigator.storage && root.navigator.storage.persist) root.navigator.storage.persist(); } catch (_) {}
+    try { if (root.navigator.storage && root.navigator.storage.persist) return root.navigator.storage.persist(); } catch (_) {}
+    return Promise.resolve(false);
+  }
+
+  // Papierkorb: nach TRASH_DAYS endgültig entfernen
+  async function purgeTrash() {
+    const limit = Date.now() - TRASH_DAYS * 86400000;
+    const items = await listProjects();
+    for (const it of items) {
+      if (it.deletedAt && Date.parse(it.deletedAt) < limit) await removeProject(it.id);
+    }
+  }
+
+  // ---------- Validierung / Migration ----------
+  const isNum = (v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 1e6;
+  const colorOr = (c) => (typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c) ? c : "#ff3b30");
+  const unitOr = (u) => (UNITS.includes(u) ? u : " mm");
+  const cleanValue = (v) => String(v == null ? "" : v).replace(/,/g, ".").replace(/[^\d.]/g, "").slice(0, 12);
+  const cleanText = (v, n) => (typeof v === "string" ? v.slice(0, n) : "");
+
+  /* Prüft und vereinheitlicht ein Projekt aus Datei, localStorage oder alter Datenbank.
+   * Rückgabe: { project } oder { error }. Neue ID, außer opts.keepId. */
+  function parseProject(raw, opts) {
+    opts = opts || {};
+    if (!raw || typeof raw !== "object") return { error: "Die Datei enthält kein Projekt." };
+    const version = Number(raw.version) || 1;
+    if (version > FORMAT_VERSION) return { error: "Die Datei stammt von einer neueren FotoMaß-Version (Format " + version + "). Bitte die App aktualisieren." };
+    const photoOk = typeof raw.photoData === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(raw.photoData) && raw.photoData.length < 80e6;
+    if (!photoOk) return { error: "Kein gültiges Foto in der Datei." };
+
+    const measures = (Array.isArray(raw.measures) ? raw.measures : []).slice(0, 2000)
+      .filter((m) => m && [m.x1, m.y1, m.x2, m.y2].every(isNum))
+      .map((m, i) => ({
+        id: isNum(m.id) ? m.id : 100000 + i,
+        x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2,
+        value: cleanValue(m.value), unit: unitOr(m.unit), color: colorOr(m.color),
+        label: cleanText(m.label, 40), locked: m.locked === true
+      }));
+
+    const drawings = (Array.isArray(raw.drawings) ? raw.drawings : []).slice(0, 5000)
+      .filter((d) => d && ["freehand", "line", "rect", "text"].includes(d.type))
+      .map((d, i) => ({
+        id: isNum(d.id) ? d.id : 200000 + i, type: d.type,
+        x1: isNum(d.x1) ? d.x1 : 0, y1: isNum(d.y1) ? d.y1 : 0, x2: isNum(d.x2) ? d.x2 : 0, y2: isNum(d.y2) ? d.y2 : 0,
+        color: colorOr(d.color),
+        width: isNum(d.width) && d.width > 0 ? Math.min(d.width, 40) : 4,
+        fontSize: isNum(d.fontSize) && d.fontSize > 0 ? Math.min(d.fontSize, 120) : undefined,
+        text: d.type === "text" ? cleanText(d.text, 200) : undefined,
+        points: d.type === "freehand" && Array.isArray(d.points)
+          ? d.points.slice(0, 20000).filter((p) => p && isNum(p.x) && isNum(p.y)).map((p) => ({ x: p.x, y: p.y })) : undefined
+      }));
+
+    const maxId = Math.max(0, ...measures.map((m) => m.id), ...drawings.map((d) => d.id));
+    const original = typeof raw.originalData === "string" && /^data:image\/[a-z0-9.+-]+;base64,/.test(raw.originalData) && raw.originalData.length < 150e6
+      ? raw.originalData : null;
+
+    const project = {
+      version: FORMAT_VERSION, app: "FotoMaß",
+      id: opts.keepId && typeof raw.id === "string" ? raw.id : newId(),
+      projectName: cleanText(raw.projectName, 80),
+      created: typeof raw.created === "string" ? raw.created : (typeof raw.savedAt === "string" ? raw.savedAt : new Date().toISOString()),
+      savedAt: typeof raw.savedAt === "string" ? raw.savedAt : new Date().toISOString(),
+      photoData: raw.photoData,
+      measures, drawings,
+      nextId: Math.max(isNum(raw.nextId) ? raw.nextId : 1, maxId + 1),
+      unit: unitOr(raw.unit),
+      snap: typeof raw.snap === "boolean" ? raw.snap : true,
+      fontSize: Math.min(48, Math.max(8, isNum(raw.fontSize) ? raw.fontSize : 24)),
+      thumb: typeof raw.thumb === "string" && raw.thumb.startsWith("data:image/") && raw.thumb.length < 200e3 ? raw.thumb : "",
+      deletedAt: null
+    };
+    return { project, originalData: original, fromVersion: version };
+  }
+
+  const dataUrlToBlob = (url) => fetch(url).then((r) => r.blob());
+
+  /* Ältere Daten übernehmen (einmalig, nichts wird gelöscht außer dem alten Datenbank-Schlüssel nach erfolgreicher Übernahme):
+   *  - Datenbank v1: Schlüssel „_autosave“ und benannte Projekte (Schlüssel = Name)
+   *  - localStorage „fotomass-project“ (Format 7)
+   * Rückgabe: Anzahl übernommener Projekte */
+  async function migrateLegacy() {
+    let count = 0;
+    const d = await db();
+    const legacy = await new Promise((resolve, reject) => {
+      const rows = [];
+      const req = d.transaction(STORE_P, "readonly").objectStore(STORE_P).openCursor();
+      req.onsuccess = () => {
+        const c = req.result;
+        if (!c) return resolve(rows);
+        if (!(c.value && typeof c.value.id === "string")) rows.push({ key: c.key, value: c.value });
+        c.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+    for (const row of legacy) {
+      const r = parseProject(row.value);
+      if (r.project) {
+        if (row.key === "_autosave" && !r.project.projectName) r.project.projectName = "Wiederhergestellt";
+        await putProject(r.project);
+        count++;
+      }
+      await run(STORE_P, "readwrite", (s) => s.delete(row.key)); // erst nach erfolgreichem Schreiben
+    }
+    try {
+      const raw = root.localStorage && root.localStorage.getItem("fotomass-project");
+      if (raw && !root.localStorage.getItem("fm-ls-migrated")) {
+        const r = parseProject(JSON.parse(raw));
+        if (r.project) {
+          if (!r.project.projectName) r.project.projectName = "Altes Projekt";
+          await putProject(r.project);
+          count++;
+        }
+        root.localStorage.setItem("fm-ls-migrated", "1"); // Original bleibt als Sicherung erhalten
+      }
+    } catch (_) {}
+    return count;
   }
 
   // ---------- Dateien ----------
@@ -75,8 +257,8 @@
     try { return !!(root.navigator.canShare && root.navigator.canShare({ files })); } catch (_) { return false; }
   }
 
-  /* Teilen-Menü öffnen. Rückgabe: "shared" | "cancelled" | "unsupported" | "failed"
-   * WICHTIG: direkt im Klick-Handler aufrufen (iOS verlangt eine frische Berührung). */
+  /* Teilen-Menü. Rückgabe: "shared" | "cancelled" | "unsupported" | "failed"
+   * Direkt im Klick-Handler aufrufen (iOS verlangt eine frische Berührung). */
   async function shareFiles(files, title) {
     if (!canShareFiles(files)) return "unsupported";
     try {
@@ -88,12 +270,11 @@
     }
   }
 
-  // Projekt-Datei: erst Teilen-Menü („In Dateien sichern“), sonst Download
+  // Projekt-Datei: Teilen-Menü („In Dateien sichern“), sonst Download
   async function saveProjectFile(payload, baseName) {
     const json = JSON.stringify(payload);
     const name = baseName + ".fotomass.json";
-    const candidates = ["application/json", "text/plain"];
-    for (const type of candidates) {
+    for (const type of ["application/json", "text/plain"]) {
       const file = new File([json], name, { type });
       if (canShareFiles([file])) {
         const r = await shareFiles([file], baseName);
@@ -105,36 +286,11 @@
     return "downloaded";
   }
 
-  // Kleine Plausibilitätsprüfung für geladene Projektdaten
-  function sanitizeProject(data) {
-    if (!data || typeof data !== "object" || typeof data.photoData !== "string" || !data.photoData.startsWith("data:image/")) return null;
-    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-    const measures = (Array.isArray(data.measures) ? data.measures : []).map((m) => ({
-      id: num(m.id), x1: num(m.x1), y1: num(m.y1), x2: num(m.x2), y2: num(m.y2),
-      value: String(m.value ?? "").replace(/[^\d.]/g, ""),
-      unit: [" mm", " cm", " m"].includes(m.unit) ? m.unit : " mm",
-      color: /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : "#ff3b30"
-    }));
-    const drawings = (Array.isArray(data.drawings) ? data.drawings : []).filter((d) => d && ["freehand", "line", "rect", "text"].includes(d.type)).map((d) => ({
-      id: num(d.id), type: d.type,
-      x1: num(d.x1), y1: num(d.y1), x2: num(d.x2), y2: num(d.y2),
-      color: /^#[0-9a-f]{6}$/i.test(d.color) ? d.color : "#ff3b30",
-      width: num(d.width) || 4,
-      fontSize: num(d.fontSize) || undefined,
-      text: typeof d.text === "string" ? d.text.slice(0, 200) : undefined,
-      points: Array.isArray(d.points) ? d.points.map((p) => ({ x: num(p.x), y: num(p.y) })) : undefined
-    }));
-    return {
-      projectName: String(data.projectName || "").slice(0, 80),
-      photoData: data.photoData,
-      measures, drawings,
-      nextId: num(data.nextId) || 1,
-      unit: [" mm", " cm", " m"].includes(data.unit) ? data.unit : " mm",
-      snap: typeof data.snap === "boolean" ? data.snap : true,
-      fontSize: Math.min(48, Math.max(8, num(data.fontSize) || 18)),
-      savedAt: data.savedAt || ""
-    };
-  }
-
-  FM.storage = { put, get, del, list, AUTOSAVE_KEY, requestPersistence, downloadBlob, canShareFiles, shareFiles, saveProjectFile, sanitizeProject };
+  FM.storage = {
+    FORMAT_VERSION, TRASH_DAYS, newId, friendlyError,
+    putProject, getProject, listProjects, removeProject, putPhoto, getPhoto,
+    estimate, requestPersistence, purgeTrash, parseProject, dataUrlToBlob, migrateLegacy,
+    downloadBlob, canShareFiles, shareFiles, saveProjectFile
+  };
+  if (typeof module !== "undefined" && module.exports) module.exports = FM.storage;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -36,7 +36,7 @@
   const saveDialog = $("saveDialog");
   const projectsDialog = $("projectsDialog");
   const buttons = {
-    undo: $("undo"), export: $("exportImage"), exportProject: $("exportProject"),
+    undo: $("undo"), redo: $("redo"), export: $("exportImage"), exportProject: $("exportProject"),
     clear: $("clearAll"), save: $("saveProject"), load: $("loadProject"), importProject: $("importProject")
   };
 
@@ -45,7 +45,11 @@
   const CROSSHAIR_OFFSET_Y = -52;
   let photoLoaded = false;
   let photoData = null;         // verkleinertes JPEG (Data-URL) -> wird im Projekt gespeichert
-  let originalBlob = null;      // Original-Foto (nur in dieser Sitzung vorhanden)
+  let originalBlob = null;      // unverändertes Originalfoto (wird zusätzlich getrennt in IndexedDB abgelegt)
+  let projectId = null;         // Projekt-ID (Schlüssel in der Datenbank – nie der Name)
+  let projectCreated = null;
+  let saveState = "idle";       // idle | pending | saved | error
+  let redoStack = [];
   let tool = "select";
   let selectedId = null;
   let measures = [];
@@ -85,25 +89,81 @@
   // ---------- Status ----------
   const setStatus = (t) => { $("saveStatus").textContent = t; };
   const hasWork = () => measures.length > 0 || drawings.length > 0;
-  function confirmReplace() {
-    return !hasWork() || confirm("Das aktuelle Aufmaß wird ersetzt. Fortfahren?\n(Tipp: vorher „In Dateien sichern“.)");
+  const isLocked = (m) => !!(m && m.locked);
+
+  // Kurze Meldung unten mit optionaler Aktion (z. B. „Rückgängig“)
+  let toastTimer = null;
+  function toast(text, actionLabel, action, ms) {
+    const el = $("toast");
+    el.replaceChildren();
+    const span = document.createElement("span");
+    span.textContent = text;
+    el.append(span);
+    if (actionLabel && action) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = actionLabel;
+      b.addEventListener("click", () => { el.hidden = true; action(); });
+      el.append(b);
+    }
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, ms || 5000);
+  }
+
+  // Speicherstatus oben rechts: immer sichtbar, ob die Arbeit gesichert ist
+  let saveError = "";
+  function setSaveState(state, errText) {
+    saveState = state;
+    saveError = errText || "";
+    const el = $("saveBadge");
+    el.dataset.state = state;
+    el.textContent = { idle: "", pending: "… speichert", saved: "✓ gesichert", error: "⚠ nicht gesichert" }[state] || "";
+    el.title = saveError;
+    if (state === "error") setStatus(saveError);
   }
 
   // ---------- Verlauf ----------
   const snapshot = () => JSON.stringify({ measures, drawings, selectedId, nextId });
   function pushHistory(s) {
     history.push(s);
-    if (history.length > 40) history.shift();
-    buttons.undo.disabled = false;
+    if (history.length > 60) history.shift();
+    redoStack = []; // nach einer neuen Änderung gibt es nichts mehr zu wiederholen
+    updateHistoryButtons();
   }
   const remember = () => pushHistory(snapshot());
+  function updateHistoryButtons() {
+    buttons.undo.disabled = history.length === 0;
+    buttons.redo.disabled = redoStack.length === 0;
+  }
+  function restoreSnapshot(str) {
+    const s = JSON.parse(str);
+    measures = s.measures; drawings = s.drawings; selectedId = s.selectedId; nextId = s.nextId || nextId;
+    snapPoint = null;
+  }
+  function undo() {
+    const last = history.pop();
+    if (!last) return;
+    redoStack.push(snapshot());
+    restoreSnapshot(last);
+    updateHistoryButtons();
+    refresh();
+  }
+  function redo() {
+    const next = redoStack.pop();
+    if (!next) return;
+    history.push(snapshot());
+    restoreSnapshot(next);
+    updateHistoryButtons();
+    refresh();
+  }
 
   function setReady(ready) {
     buttons.export.disabled = !ready;
     buttons.exportProject.disabled = !ready;
     buttons.clear.disabled = !ready;
     buttons.save.disabled = !ready;
-    buttons.undo.disabled = history.length === 0;
+    updateHistoryButtons();
   }
 
   // Nach jeder Änderung: Liste + Zeichnung neu, Zwischenspeicher planen
@@ -256,8 +316,7 @@
       const pad = scr(10);
       g.strokeRect(Math.min(m.x1, m.x2) - pad, Math.min(m.y1, m.y2) - pad, Math.abs(m.x2 - m.x1) + pad * 2, Math.abs(m.y2 - m.y1) + pad * 2);
       g.setLineDash([]);
-      drawHandle(g, m.x1, m.y1);
-      drawHandle(g, m.x2, m.y2);
+      if (!m.locked) { drawHandle(g, m.x1, m.y1); drawHandle(g, m.x2, m.y2); }
       g.restore();
     }
   }
@@ -356,10 +415,11 @@
 
   function hitMeasure(p) {
     const endTol = scr(26), lineTol = scr(20);
-    for (let i = measures.length - 1; i >= 0; i--) { // Endpunkte zuerst
-      const m = measures[i];
-      if (dist(p, { x: m.x1, y: m.y1 }) < endTol) return { measure: m, endpoint: 1 };
-      if (dist(p, { x: m.x2, y: m.y2 }) < endTol) return { measure: m, endpoint: 2 };
+    // Endpunkte nur beim ausgewählten (sichtbare Griffe), nicht gesperrten Maß – schützt vor versehentlichem Verziehen
+    const sel = measures.find((x) => x.id === selectedId);
+    if (sel && !sel.locked) {
+      if (dist(p, { x: sel.x1, y: sel.y1 }) < endTol) return { measure: sel, endpoint: 1 };
+      if (dist(p, { x: sel.x2, y: sel.y2 }) < endTol) return { measure: sel, endpoint: 2 };
     }
     for (let i = measures.length - 1; i >= 0; i--) {
       const m = measures[i];
@@ -396,6 +456,9 @@
   // ---------- Maßliste ----------
   function renderMeasureList() {
     const list = $("measureList");
+    // Fokus zuerst lösen: löst ein anstehendes „change“ aus, bevor die Zeilen ersetzt werden (verhindert Wiedereintritt)
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && list.contains(ae)) { try { ae.blur(); } catch (_) {} }
     list.replaceChildren();
     if (!measures.length) {
       const p = document.createElement("p");
@@ -411,7 +474,7 @@
       const title = document.createElement("button");
       title.type = "button";
       title.className = "secondary";
-      title.textContent = `Maß ${index + 1}`;
+      title.textContent = `${m.locked ? "🔒 " : ""}Maß ${index + 1}`;
       title.addEventListener("click", () => { selectedId = m.id; setTool("select"); renderMeasureList(); draw(); });
 
       const input = document.createElement("input");
@@ -419,7 +482,9 @@
       input.inputMode = "decimal";
       input.placeholder = "Wert";
       input.value = fmt(m.value);
+      input.readOnly = isLocked(m);
       input.addEventListener("change", () => {
+        if (m.locked) return;
         remember();
         const p = speech.parseNumber(input.value, { typed: true });
         m.value = p.value;
@@ -441,16 +506,24 @@
       del.type = "button";
       del.className = "danger delete-measure";
       del.textContent = "✕";
-      del.addEventListener("click", () => {
-        remember();
-        measures = measures.filter((x) => x.id !== m.id);
-        if (selectedId === m.id) selectedId = null;
-        refresh();
-      });
+      del.disabled = isLocked(m);
+      mic.disabled = isLocked(m);
+      del.addEventListener("click", () => deleteMeasure(m.id));
 
       row.append(title, input, unit, mic, del);
       list.append(row);
     });
+  }
+
+  function deleteMeasure(id) {
+    const m = measures.find((x) => x.id === id);
+    if (!m) return;
+    if (m.locked) { toast("🔒 Gesperrt – erst entsperren (lang drücken › Entsperren)."); return; }
+    remember();
+    measures = measures.filter((x) => x.id !== id);
+    if (selectedId === id) selectedId = null;
+    refresh();
+    toast("Maß gelöscht.", "Rückgängig", undo);
   }
 
   function setTool(name) {
@@ -458,31 +531,163 @@
     document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
   }
 
-  // ---------- Foto laden ----------
+  // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
-    measures = []; drawings = []; history = []; selectedId = null; nextId = 1; snapPoint = null;
-    activeDrawing = null; buttons.undo.disabled = true;
+    measures = []; drawings = []; history = []; redoStack = []; selectedId = null; nextId = 1; snapPoint = null;
+    activeDrawing = null; updateHistoryButtons();
   }
 
+  const projectBaseName = () => ($("projectName").value.trim() || "fotomass").replace(/[^\p{L}\p{N}\-_]+/gu, "_").replace(/^_+|_+$/g, "") || "fotomass";
+
+  // Kleines Vorschaubild (ohne Auswahl-Rahmen)
+  function makeThumb() {
+    const full = document.createElement("canvas");
+    full.width = canvas.width; full.height = canvas.height;
+    paint(full.getContext("2d"), true);
+    const s = 180 / Math.max(canvas.width, canvas.height);
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(canvas.width * s)); c.height = Math.max(1, Math.round(canvas.height * s));
+    c.getContext("2d").drawImage(full, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.6);
+  }
+
+  // Projektdatensatz (Format 9): Maße, Zeichnungen und Beschriftungen sind eigene Daten – das Foto bleibt unverändert darunter
+  function buildRecord(withThumb) {
+    return {
+      version: storage.FORMAT_VERSION, app: "FotoMaß",
+      id: projectId, projectName: $("projectName").value, created: projectCreated, savedAt: new Date().toISOString(),
+      photoData, measures, drawings, nextId,
+      unit: unitSelect.value, snap: snapToggle.checked, fontSize: getFontSize(),
+      thumb: withThumb ? makeThumb() : undefined, deletedAt: null
+    };
+  }
+
+  // --- Automatisches Sichern (jede Änderung, 0,7 s verzögert; sofort beim Verlassen der App) ---
+  let autosaveTimer = null;
+  let saving = Promise.resolve();
+  let rev = 0;
+  function scheduleAutosave() {
+    if (!photoLoaded || !projectId) return;
+    rev++;
+    setSaveState("pending");
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(flushAutosave, 700);
+  }
+  function flushAutosave() {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    if (!photoLoaded || !projectId) return saving;
+    const myRev = rev;
+    const rec = buildRecord(true); // Stand sofort festhalten
+    saving = saving
+      .then(() => storage.putProject(rec))
+      .then(() => { if (myRev === rev) setSaveState("saved"); })
+      .catch((e) => setSaveState("error", storage.friendlyError(e)));
+    return saving;
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && saveState === "pending") flushAutosave(); });
+  window.addEventListener("pagehide", () => { if (saveState === "pending") flushAutosave(); });
+
+  // Original unverändert und getrennt ablegen (Kopie der Bytes – nicht nur eine Dateireferenz)
+  async function storeOriginal(file) {
+    try {
+      const copy = new Blob([await file.arrayBuffer()], { type: file.type || "image/jpeg" });
+      await storage.putPhoto(projectId, copy);
+      originalBlob = copy;
+      return true;
+    } catch (e) {
+      originalBlob = file;
+      toast("Originalfoto konnte nicht dauerhaft gespeichert werden: " + storage.friendlyError(e), null, null, 9000);
+      return false;
+    }
+  }
+
+  // Vor dem Wechsel zu einem anderen Foto/Projekt: aktuellen Stand sichern, bei Fehler nachfragen
+  async function leaveCurrentProject() {
+    if (!photoLoaded) return true;
+    if (saveState === "pending" || saveState === "error") await flushAutosave();
+    if (saveState === "error") {
+      return confirm("Das aktuelle Projekt konnte nicht gesichert werden:\n" + saveError + "\n\nTrotzdem wechseln? Nicht gesicherte Änderungen gehen verloren.");
+    }
+    return true;
+  }
+
+  // Projekt im Editor anzeigen (Foto aus dem Datensatz, Original separat)
+  function showProject(p, original) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        resetState();
+        setBaseFromImage(img);
+        // Alte Projekte enthielten das volle Foto -> auf Editorgröße verkleinern
+        const sameSize = (img.naturalWidth || img.width) === canvas.width;
+        photoData = sameSize ? p.photoData : baseCanvas.toDataURL("image/jpeg", 0.9);
+        projectId = p.id; projectCreated = p.created;
+        originalBlob = original || null;
+        measures = p.measures; drawings = p.drawings; nextId = p.nextId;
+        $("projectName").value = p.projectName;
+        $("photoStatus").textContent = p.projectName || "Projekt geöffnet";
+        unitSelect.value = p.unit; snapToggle.checked = p.snap; fontSizeInput.value = p.fontSize;
+        renderMeasureList(); draw(); setReady(true);
+        setSaveState("saved");
+        resolve();
+      };
+      img.onerror = () => reject(new Error("Foto im Projekt nicht ladbar"));
+      img.src = p.photoData;
+    });
+  }
+
+  async function openProject(id) {
+    try {
+      const rec = await storage.getProject(id);
+      const r = storage.parseProject(rec, { keepId: true });
+      if (!r.project) { setStatus("Projekt nicht lesbar: " + r.error); return false; }
+      let original = null;
+      try { original = (await storage.getPhoto(id)) || null; } catch (_) {}
+      await showProject(r.project, original);
+      if (r.fromVersion < storage.FORMAT_VERSION) scheduleAutosave(); // ältere Projekte im neuen Format ablegen
+      return true;
+    } catch (e) {
+      setStatus("Projekt konnte nicht geöffnet werden: " + (e && e.message ? e.message : e));
+      return false;
+    }
+  }
+
+  // Editor leeren (z. B. wenn das geöffnete Projekt in den Papierkorb kommt)
+  function closeProject() {
+    photoLoaded = false; projectId = null; photoData = null; originalBlob = null;
+    resetState();
+    canvas.style.display = "none";
+    emptyState.hidden = false; emptyState.classList.remove("is-hidden"); emptyState.style.display = "";
+    $("projectName").value = ""; $("photoStatus").textContent = "Noch kein Foto";
+    renderMeasureList(); setReady(false); setSaveState("idle");
+  }
+
+  // --- Neues Foto = neues Projekt (das bisherige bleibt in der Projektliste erhalten) ---
   function loadImageFile(file) {
     if (!file) return;
     if (!file.type.startsWith("image/") && !/\.(jpe?g|png|heic|heif|webp)$/i.test(file.name || "")) {
       alert("Bitte eine Bilddatei wählen.");
       return;
     }
-    if (!confirmReplace()) return;
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       URL.revokeObjectURL(url);
+      if (!(await leaveCurrentProject())) return;
       resetState();
-      originalBlob = file;
+      projectId = storage.newId();
+      projectCreated = new Date().toISOString();
+      $("projectName").value = "";
       setBaseFromImage(img);
       photoData = baseCanvas.toDataURL("image/jpeg", 0.9);
       $("photoStatus").textContent = file.name || "Foto geladen";
-      refresh();
-      setReady(true);
-      setStatus("Foto geladen. Maßlinie ziehen – danach öffnet sich das Wert-Feld.");
+      originalBlob = file;
+      renderMeasureList(); draw(); setReady(true);
+      setStatus("Neues Projekt angelegt. Maßlinie ziehen – danach öffnet sich das Wert-Feld.");
+      await storeOriginal(file);
+      rev++;
+      await flushAutosave();
     };
     img.onerror = () => { URL.revokeObjectURL(url); alert("Bild konnte nicht geladen werden (Format?)."); };
     img.src = url;
@@ -490,95 +695,40 @@
   $("photoCamera").addEventListener("change", (e) => { loadImageFile(e.target.files && e.target.files[0]); e.target.value = ""; });
   $("photoGallery").addEventListener("change", (e) => { loadImageFile(e.target.files && e.target.files[0]); e.target.value = ""; });
 
-  // ---------- Projekt ----------
-  const projectBaseName = () => ($("projectName").value.trim() || "fotomass").replace(/[^\p{L}\p{N}\-_]+/gu, "_").replace(/^_+|_+$/g, "") || "fotomass";
-
-  function makeThumb() {
-    const c = document.createElement("canvas");
-    const s = 220 / Math.max(canvas.width, canvas.height);
-    const full = document.createElement("canvas");
-    full.width = canvas.width; full.height = canvas.height;
-    paint(full.getContext("2d"), true);
-    c.width = Math.round(canvas.width * s); c.height = Math.round(canvas.height * s);
-    c.getContext("2d").drawImage(full, 0, 0, c.width, c.height);
-    return c.toDataURL("image/jpeg", 0.6);
-  }
-
-  function buildPayload(withThumb) {
-    return {
-      version: 8, app: "FotoMaß",
-      projectName: $("projectName").value,
-      photoData, measures, drawings, nextId,
-      unit: unitSelect.value, snap: snapToggle.checked, fontSize: getFontSize(),
-      thumb: withThumb ? makeThumb() : undefined,
-      savedAt: new Date().toISOString()
-    };
-  }
-
-  function applyProjectData(raw, feedback) {
-    const data = storage.sanitizeProject(raw);
-    if (!data) { if (feedback) setStatus("Ungültige oder unvollständige Projekt-Datei."); return; }
-    const img = new Image();
-    img.onload = () => {
-      resetState();
-      originalBlob = null;
-      setBaseFromImage(img);
-      // Alte Projekte enthielten das volle Foto -> auf Editorgröße verkleinern
-      const sameSize = (img.naturalWidth || img.width) === canvas.width;
-      photoData = sameSize ? data.photoData : baseCanvas.toDataURL("image/jpeg", 0.9);
-      measures = data.measures; drawings = data.drawings; nextId = Math.max(data.nextId, 1 + Math.max(0, ...measures.map((m) => m.id), ...drawings.map((d) => d.id)));
-      $("projectName").value = data.projectName;
-      $("photoStatus").textContent = data.projectName || "Projekt geladen";
-      unitSelect.value = data.unit; snapToggle.checked = data.snap; fontSizeInput.value = data.fontSize;
-      renderMeasureList(); draw(); setReady(true);
-      if (feedback) setStatus("Projekt geladen" + (data.savedAt ? " (" + new Date(data.savedAt).toLocaleString("de-DE") + ")" : "") + ".");
-    };
-    img.onerror = () => { if (feedback) setStatus("Foto in der Datei nicht ladbar."); };
-    img.src = data.photoData;
-  }
-
-  // Zwischenspeicher (überlebt Neuladen z. B. nach der Kamera)
-  let autosaveTimer = null;
-  function scheduleAutosave() {
-    if (!photoLoaded) return;
-    clearTimeout(autosaveTimer);
-    autosaveTimer = setTimeout(flushAutosave, 700);
-  }
-  async function flushAutosave() {
-    clearTimeout(autosaveTimer);
-    if (!photoLoaded || !photoData) return;
-    try { await storage.put(storage.AUTOSAVE_KEY, buildPayload(false)); } catch (_) {}
-  }
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAutosave(); });
-  window.addEventListener("pagehide", flushAutosave);
-
-  // Im Browser speichern (mehrere Projekte)
+  // "Jetzt sichern": sofort schreiben und Ergebnis anzeigen
   buttons.save.addEventListener("click", async () => {
     if (!photoLoaded) return;
     if (!$("projectName").value.trim()) $("projectName").value = "Projekt " + new Date().toLocaleDateString("de-DE");
-    try {
-      const payload = buildPayload(true);
-      await storage.put(payload.projectName.trim(), payload);
-      setStatus("Im Browser gespeichert: „" + payload.projectName.trim() + "“ (" + new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) + "). Für ein Backup zusätzlich „In Dateien sichern“.");
-    } catch (_) {
-      setStatus("Browser-Speicher nicht verfügbar – bitte „In Dateien sichern“ nutzen.");
+    rev++;
+    await flushAutosave();
+    const est = await storage.estimate();
+    if (saveState === "saved") {
+      setStatus("✓ Gesichert um " + new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) +
+        (est ? " · Browser-Speicher belegt: " + (est.usage / 1048576).toFixed(0) + " MB" : "") +
+        ". Für ein Backup zusätzlich „In Dateien sichern“.");
     }
   });
 
-  async function openProjectsDialog() {
+  // --- Projektliste mit Papierkorb ---
+  let showTrash = false;
+  async function renderProjects() {
     const box = $("projectsList");
     box.replaceChildren();
     let items = [];
-    try { items = await storage.list(); } catch (_) {}
-    if (!items.length) {
+    try { items = await storage.listProjects(); }
+    catch (e) { setStatus(storage.friendlyError(e)); }
+    const trashCount = items.filter((i) => i.deletedAt).length;
+    $("trashToggle").textContent = showTrash ? "‹ Zurück zu den Projekten" : "🗑 Papierkorb (" + trashCount + ")";
+    const shown = items.filter((i) => !!i.deletedAt === showTrash);
+    if (!shown.length) {
       const p = document.createElement("p");
       p.className = "empty-list";
-      p.textContent = "Noch keine Projekte im Browser gespeichert.";
+      p.textContent = showTrash ? "Papierkorb ist leer. Gelöschte Projekte bleiben " + storage.TRASH_DAYS + " Tage erhalten." : "Noch keine Projekte. Mit Kamera oder Galerie beginnen.";
       box.append(p);
     }
-    items.forEach((it) => {
+    shown.forEach((it) => {
       const row = document.createElement("div");
-      row.className = "project-row";
+      row.className = "project-row" + (it.id === projectId ? " current" : "");
       if (it.thumb && it.thumb.startsWith("data:image/")) {
         const im = document.createElement("img");
         im.src = it.thumb; im.alt = "";
@@ -587,56 +737,145 @@
       const info = document.createElement("div");
       info.className = "project-info";
       const n = document.createElement("strong"); n.textContent = it.name;
-      const d = document.createElement("small"); d.textContent = it.savedAt ? new Date(it.savedAt).toLocaleString("de-DE") : "";
+      const d = document.createElement("small");
+      d.textContent = (it.id === projectId ? "● geöffnet · " : "") + (it.savedAt ? new Date(it.savedAt).toLocaleString("de-DE") : "") + " · " + it.nMeasures + " Maße";
       info.append(n, d);
-      const open = document.createElement("button");
-      open.type = "button"; open.textContent = "Öffnen";
-      open.addEventListener("click", async () => {
-        if (!confirmReplace()) return;
-        const data = await storage.get(it.key);
-        closeDialog(projectsDialog);
-        applyProjectData(data, true);
-      });
-      const del = document.createElement("button");
-      del.type = "button"; del.className = "danger delete-measure"; del.textContent = "✕";
-      del.addEventListener("click", async () => {
-        if (!confirm("Projekt „" + it.name + "“ aus dem Browser löschen?")) return;
-        await storage.del(it.key);
-        openProjectsDialog();
-      });
-      row.append(info, open, del);
+      row.append(info);
+
+      if (!showTrash) {
+        const open = document.createElement("button");
+        open.type = "button"; open.textContent = "Öffnen"; open.disabled = it.id === projectId;
+        open.addEventListener("click", async () => {
+          if (!(await leaveCurrentProject())) return;
+          closeDialog(projectsDialog);
+          if (await openProject(it.id)) setStatus("Projekt „" + it.name + "“ geöffnet.");
+        });
+        const del = document.createElement("button");
+        del.type = "button"; del.className = "danger delete-measure"; del.textContent = "🗑"; del.title = "In den Papierkorb";
+        del.addEventListener("click", async () => {
+          try {
+            if (it.id === projectId) { if (saveState === "pending") await flushAutosave(); closeProject(); }
+            const rec = await storage.getProject(it.id);
+            rec.deletedAt = new Date().toISOString();
+            await storage.putProject(rec);
+            toast("„" + it.name + "“ im Papierkorb.", "Wiederherstellen", async () => {
+              const r2 = await storage.getProject(it.id); r2.deletedAt = null; await storage.putProject(r2);
+              if (!projectsDialog.hidden) renderProjects();
+            }, 8000);
+          } catch (e) { setStatus(storage.friendlyError(e)); }
+          renderProjects();
+        });
+        row.append(open, del);
+      } else {
+        const back = document.createElement("button");
+        back.type = "button"; back.textContent = "Zurück holen";
+        back.addEventListener("click", async () => {
+          try { const rec = await storage.getProject(it.id); rec.deletedAt = null; await storage.putProject(rec); } catch (e) { setStatus(storage.friendlyError(e)); }
+          renderProjects();
+        });
+        const gone = document.createElement("button");
+        gone.type = "button"; gone.className = "danger delete-measure"; gone.textContent = "✕"; gone.title = "Endgültig löschen";
+        gone.addEventListener("click", async () => {
+          if (!confirm("„" + it.name + "“ endgültig löschen? Das kann nicht rückgängig gemacht werden.")) return;
+          try { await storage.removeProject(it.id); } catch (e) { setStatus(storage.friendlyError(e)); }
+          renderProjects();
+        });
+        row.append(back, gone);
+      }
       box.append(row);
     });
-    showDialog(projectsDialog);
+    const est = await storage.estimate();
+    $("storageInfo").textContent = est ? "Browser-Speicher belegt: " + (est.usage / 1048576).toFixed(0) + " MB" + (est.quota ? " von ca. " + (est.quota / 1048576).toFixed(0) + " MB" : "") : "";
   }
-  buttons.load.addEventListener("click", openProjectsDialog);
+  buttons.load.addEventListener("click", async () => {
+    showTrash = false;
+    if (saveState === "pending") await flushAutosave();
+    await renderProjects();
+    showDialog(projectsDialog);
+  });
+  $("trashToggle").addEventListener("click", () => { showTrash = !showTrash; renderProjects(); });
   $("projectsClose").addEventListener("click", () => closeDialog(projectsDialog));
 
-  // Projekt-Datei (Dateien-App)
+  // --- Projekt-Datei (Dateien-App) ---
+  // Datei erst fertig bauen, dann mit einem frischen Tipp teilen (iOS verlangt eine Berührung direkt vor dem Teilen)
+  let projectFile = null;
+  async function buildProjectFile() {
+    const rec = buildRecord(false);
+    rec.sourceId = rec.id; delete rec.id;
+    if ($("optWithOriginal").checked && originalBlob) {
+      rec.originalData = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result); fr.onerror = () => reject(fr.error);
+        fr.readAsDataURL(originalBlob);
+      });
+      rec.originalName = "original";
+    }
+    const name = projectBaseName() + ".fotomass.json";
+    return new File([JSON.stringify(rec)], name, { type: "application/json" });
+  }
+  async function prepareProjectFile() {
+    $("projectFileShare").disabled = true; $("projectFileDownload").disabled = true;
+    $("projectFileInfo").textContent = "Datei wird vorbereitet …";
+    try {
+      projectFile = await buildProjectFile();
+      $("projectFileInfo").textContent = "„" + projectFile.name + "“ ist bereit (" + (projectFile.size / 1048576).toFixed(1) + " MB).";
+      $("projectFileShare").disabled = false; $("projectFileDownload").disabled = false;
+    } catch (e) {
+      projectFile = null;
+      $("projectFileInfo").textContent = "Datei konnte nicht erstellt werden (zu wenig Arbeitsspeicher?). Ohne Originalfoto nochmal versuchen.";
+    }
+  }
   buttons.exportProject.addEventListener("click", async () => {
     if (!photoLoaded) return;
-    try {
-      const r = await storage.saveProjectFile(buildPayload(false), projectBaseName());
-      setStatus({
-        shared: "Im Teilen-Menü „In Dateien sichern“ wählen – dann ist die Projekt-Datei abgelegt. Später mit „Projekt-Datei öffnen“ weiterbearbeiten.",
-        downloaded: "Projekt-Datei wurde heruntergeladen (Ordner „Downloads“). Später mit „Projekt-Datei öffnen“ weiterbearbeiten.",
-        cancelled: "Abgebrochen."
-      }[r] || "Gesichert.");
-    } catch (_) {
-      setStatus("Projekt-Datei konnte nicht erstellt werden.");
-    }
+    $("optWithOriginal").disabled = !originalBlob;
+    if (!originalBlob) $("optWithOriginal").checked = false;
+    showDialog($("projectFileDialog"));
+    await prepareProjectFile();
   });
+  $("optWithOriginal").addEventListener("change", prepareProjectFile);
+  $("projectFileShare").addEventListener("click", async () => {
+    if (!projectFile) return;
+    const hint = $("projectFileInfo");
+    const r = await storage.shareFiles([new File([projectFile], projectFile.name, { type: "application/json" })], projectBaseName())
+      .then((x) => (x === "unsupported" ? storage.shareFiles([new File([projectFile], projectFile.name, { type: "text/plain" })], projectBaseName()) : x));
+    if (r === "shared") hint.textContent = "✓ Im Menü „In Dateien sichern“ ablegen. Später mit „Projekt-Datei öffnen“ wieder laden.";
+    else if (r === "cancelled") hint.textContent = "Abgebrochen – die Datei ist weiter bereit.";
+    else hint.textContent = "Teilen nicht möglich – bitte „Herunterladen“ nutzen.";
+  });
+  $("projectFileDownload").addEventListener("click", () => {
+    if (!projectFile) return;
+    storage.downloadBlob(projectFile, projectFile.name);
+    $("projectFileInfo").textContent = "Heruntergeladen (Ordner „Downloads“).";
+  });
+  $("projectFileClose").addEventListener("click", () => { closeDialog($("projectFileDialog")); projectFile = null; });
 
+  // --- Projekt-Datei öffnen: immer als NEUES Projekt, überschreibt nie ein vorhandenes ---
   buttons.importProject.addEventListener("click", () => $("projectFileInput").click());
   $("projectFileInput").addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
-    if (!confirmReplace()) return;
+    if (file.size > 150 * 1048576) { setStatus("Datei zu groß (über 150 MB)."); return; }
     const reader = new FileReader();
-    reader.onload = () => {
-      try { applyProjectData(JSON.parse(reader.result), true); }
-      catch (_) { setStatus("Ungültige Projekt-Datei."); }
+    reader.onload = async () => {
+      let raw;
+      try { raw = JSON.parse(reader.result); } catch (_) { setStatus("Keine gültige Projekt-Datei (kein lesbares JSON)."); return; }
+      const r = storage.parseProject(raw);
+      if (!r.project) { setStatus("Import abgelehnt: " + r.error); return; }
+      if (!(await leaveCurrentProject())) return;
+      try {
+        let original = null;
+        if (r.originalData) { try { original = await storage.dataUrlToBlob(r.originalData); } catch (_) {} }
+        const p = r.project;
+        if (!p.projectName) p.projectName = file.name.replace(/\.fotomass\.json$|\.json$/i, "");
+        p.savedAt = new Date().toISOString();
+        await storage.putProject(p);
+        if (original) await storage.putPhoto(p.id, original);
+        await showProject(p, original);
+        setStatus("Projekt „" + p.projectName + "“ geöffnet" + (r.fromVersion < storage.FORMAT_VERSION ? " (älteres Dateiformat " + r.fromVersion + " übernommen)" : "") + (original ? "." : ". Hinweis: kein Originalfoto in der Datei – „Original“ ist die verkleinerte Kopie."));
+      } catch (err) {
+        setStatus("Import fehlgeschlagen: " + storage.friendlyError(err));
+      }
     };
     reader.onerror = () => setStatus("Datei konnte nicht gelesen werden.");
     reader.readAsText(file);
@@ -661,10 +900,14 @@
       const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
       const base = `${projectBaseName()}_${stamp}`;
       const annotated = await renderAnnotatedBlob();
-      const original = originalBlob || await (await fetch(photoData)).blob();
+      let original = originalBlob || null;
+      if (!original) { try { original = (await storage.getPhoto(projectId)) || null; } catch (_) {} }
+      const reduced = !original; // Originaldatei nicht vorhanden (z. B. Projekt aus Datei ohne Original)
+      if (reduced) original = await (await fetch(photoData)).blob();
       const otype = original.type || "image/jpeg";
+      $("capOriginal").textContent = reduced ? "Foto (verkleinert – Originaldatei fehlt)" : "Original";
       exportFiles = [
-        new File([original], `${base}_Original.${extFor(otype)}`, { type: otype }),
+        new File([original], `${base}_${reduced ? "Foto-verkleinert" : "Original"}.${extFor(otype)}`, { type: otype }),
         new File([annotated], `${base}_Masse.png`, { type: "image/png" })
       ];
       clearExportUrls();
@@ -780,6 +1023,7 @@
     stopSpeech();
     const m = measures.find((x) => x.id === measureId);
     if (!m) return;
+    if (m.locked) { toast("🔒 Gesperrt – erst entsperren (lang drücken › Entsperren)."); return; }
     dlg.id = measureId;
     dlg.isNew = !!opts.isNew;
     $("valueDialogTitle").textContent = `Maß ${measures.indexOf(m) + 1} – Wert`;
@@ -852,9 +1096,24 @@
     selectedId = id;
     $("actionTitle").textContent = `Maß ${measures.indexOf(m) + 1}: ${m.value ? fmt(m.value) + (m.unit || "") : "kein Wert"}`;
     $("actColor").value = m.color || "#ff3b30";
+    syncActionLock(m);
     renderMeasureList(); draw();
     showDialog(actionDialog);
   }
+  function syncActionLock(m) {
+    $("actLock").textContent = m.locked ? "🔓 Entsperren" : "🔒 Sperren";
+    ["actValue", "actMic", "actDelete"].forEach((id) => { $(id).disabled = !!m.locked; });
+    $("actColor").disabled = !!m.locked;
+  }
+  $("actLock").addEventListener("click", () => {
+    const m = measures.find((x) => x.id === actionMeasureId);
+    if (!m) return;
+    remember();
+    m.locked = !m.locked;
+    syncActionLock(m);
+    $("actionTitle").textContent = `Maß ${measures.indexOf(m) + 1}${m.locked ? " 🔒" : ""}`;
+    refresh();
+  });
   const closeActionDialog = () => { closeDialog(actionDialog); actionMeasureId = null; };
   $("actClose").addEventListener("click", closeActionDialog);
   $("actValue").addEventListener("click", () => { const id = actionMeasureId; closeActionDialog(); openValueDialog(id); });
@@ -871,35 +1130,28 @@
     if (!m) return;
     remember();
     const off = scr(40);
-    const copy = Object.assign({}, m, { id: nextId++, x1: m.x1 + off, y1: m.y1 + off, x2: m.x2 + off, y2: m.y2 + off });
+    const copy = Object.assign({}, m, { locked: false, id: nextId++, x1: m.x1 + off, y1: m.y1 + off, x2: m.x2 + off, y2: m.y2 + off });
     measures.push(copy);
     selectedId = copy.id;
     closeActionDialog();
     refresh();
   });
   $("actDelete").addEventListener("click", () => {
-    remember();
-    measures = measures.filter((x) => x.id !== actionMeasureId);
-    if (selectedId === actionMeasureId) selectedId = null;
+    const id = actionMeasureId;
     closeActionDialog();
-    refresh();
+    deleteMeasure(id);
   });
 
   // ---------- Werkzeug-Leiste & Einstellungen ----------
-  buttons.undo.addEventListener("click", () => {
-    const last = history.pop();
-    if (!last) return;
-    const s = JSON.parse(last);
-    measures = s.measures; drawings = s.drawings; selectedId = s.selectedId; nextId = s.nextId || nextId;
-    snapPoint = null;
-    buttons.undo.disabled = history.length === 0;
-    refresh();
-  });
+  buttons.undo.addEventListener("click", undo);
+  buttons.redo.addEventListener("click", redo);
   buttons.clear.addEventListener("click", () => {
-    if (!confirm("Alle Maßlinien und Zeichnungen löschen?")) return;
+    const keep = measures.filter(isLocked);
+    if (!confirm("Alle Maßlinien und Zeichnungen löschen?" + (keep.length ? "\n(" + keep.length + " gesperrte Maße bleiben erhalten.)" : ""))) return;
     remember();
-    measures = []; drawings = []; selectedId = null; snapPoint = null;
+    measures = keep; drawings = []; selectedId = null; snapPoint = null;
     refresh();
+    toast("Alles gelöscht.", "Rückgängig", undo, 8000);
   });
   $("styleToggle").addEventListener("click", () => {
     document.body.classList.toggle("site-bold");
@@ -949,10 +1201,12 @@
     if (tool === "select") {
       const hit = hitMeasure(p);
       if (hit) {
+        // Erst antippen = auswählen. Verschieben geht nur, wenn das Maß schon ausgewählt und nicht gesperrt ist.
+        const armed = selectedId === hit.measure.id && !hit.measure.locked;
         selectedId = hit.measure.id;
         activeDrawing = hit.endpoint
-          ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false }
-          : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2 } };
+          ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false, changed: false, armed }
+          : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2 } };
         // langes Drücken ohne Bewegen -> Menü
         cancelLongPress();
         longPressTimer = setTimeout(() => {
@@ -975,10 +1229,12 @@
     if (tool === "eraser") {
       const hit = hitMeasure(p);
       if (hit) {
+        if (hit.measure.locked) { toast("🔒 Gesperrt – erst entsperren (lang drücken)."); return; }
         pushHistory(preSnap);
         measures = measures.filter((x) => x.id !== hit.measure.id);
         if (selectedId === hit.measure.id) selectedId = null;
         refresh();
+        toast("Maß gelöscht.", "Rückgängig", undo);
       } else {
         const idx = hitDrawing(p);
         if (idx >= 0) { pushHistory(preSnap); drawings.splice(idx, 1); refresh(); }
@@ -1033,9 +1289,12 @@
 
     let p = pointWithCrosshair(e);
 
+    if (/^move-/.test(activeDrawing.type) && !activeDrawing.armed) return; // nur auswählen, nichts verschieben
+
     if (activeDrawing.type === "move-measure") {
       const m = measures.find((x) => x.id === activeDrawing.id);
-      if (!m) return;
+      if (!m || m.locked) return;
+      activeDrawing.changed = true;
       const dx = p.x - activeDrawing.dx, dy = p.y - activeDrawing.dy;
       m.x1 = activeDrawing.original.x1 + dx; m.y1 = activeDrawing.original.y1 + dy;
       m.x2 = activeDrawing.original.x2 + dx; m.y2 = activeDrawing.original.y2 + dy;
@@ -1044,7 +1303,8 @@
     }
     if (activeDrawing.type === "move-endpoint") {
       const m = measures.find((x) => x.id === activeDrawing.id);
-      if (!m) return;
+      if (!m || m.locked) return;
+      activeDrawing.changed = true;
       const sn = findSnap(p, m.id);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
       if (activeDrawing.endpoint === 1) { m.x1 = p.x; m.y1 = p.y; } else { m.x2 = p.x; m.y2 = p.y; }
@@ -1084,8 +1344,7 @@
 
     if (a.type === "move-measure" || a.type === "move-endpoint") {
       if (a.moved) {
-        pushHistory(preSnap);
-        scheduleAutosave();
+        if (a.changed) { pushHistory(preSnap); scheduleAutosave(); }
       } else if (a.type === "move-measure") { // Doppel-Tipp öffnet das Wert-Feld
         const now = Date.now();
         if (lastTap.id === a.id && now - lastTap.time < 450) {
@@ -1146,19 +1405,26 @@
   // ---------- Start ----------
   async function restore() {
     try {
-      const saved = await storage.get(storage.AUTOSAVE_KEY);
-      if (saved) { applyProjectData(saved, false); return; }
-    } catch (_) {}
-    try { // altes Format (nur ein Projekt in localStorage)
-      const raw = localStorage.getItem("fotomass-project");
-      if (raw) applyProjectData(JSON.parse(raw), false);
-    } catch (_) {}
+      await storage.migrateLegacy();      // ältere Daten (Autosave, benannte Projekte, localStorage) übernehmen
+      await storage.purgeTrash();         // Papierkorb nach 30 Tagen leeren
+      const items = (await storage.listProjects()).filter((i) => !i.deletedAt);
+      if (items.length) await openProject(items[0].id); // zuletzt bearbeitetes Projekt
+    } catch (e) {
+      setSaveState("error", storage.friendlyError(e));
+    }
   }
 
   setReady(false);
   storage.requestPersistence();
   restore();
   if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
-    navigator.serviceWorker.register("service-worker.js").catch(() => {});
+    navigator.serviceWorker.register("service-worker.js").then((reg) => {
+      reg.addEventListener("updatefound", () => {
+        const w = reg.installing;
+        if (w) w.addEventListener("statechange", () => {
+          if (w.state === "installed" && navigator.serviceWorker.controller) toast("Neue Version geladen – beim nächsten Öffnen aktiv.", null, null, 6000);
+        });
+      });
+    }).catch(() => {});
   }
 })();
