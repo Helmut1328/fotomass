@@ -1,21 +1,21 @@
-FotoMaß – Update: Bild zuschneiden und skalieren
+FotoMaß – Fehlerkorrektur für Sperren und Maßzahlen
 
-Dateien:
-- index.html: aktualisierte HTML-Datei
-- app.js: aktualisierte Bedienlogik
-- style_patch.css: zusätzliche Styles für den Zuschneiderahmen
+Enthalten:
+- index.html
+- app.js
+- style_patch.css
+- README_UPDATE.txt
 
-Einbau in GitHub Pages:
-1. Lade index.html und app.js in das Hauptverzeichnis deines bestehenden fotomass-Repositorys und ersetze die vorhandenen Dateien.
-2. Lade style_patch.css ebenfalls in das Hauptverzeichnis hoch.
-3. Lass style.css, speech.js, storage.js, manifest.json und die übrigen bestehenden Dateien unverändert.
-4. Warte auf GitHub Pages und lade die App auf dem Smartphone neu. Falls die alte Version erscheint, die Seite schließen und erneut öffnen.
+Korrekturen:
+1. Sperren/Entsperren: Verlaufssicherungen serialisieren eingefügte Bilddaten nicht mehr bei jeder Aktion erneut. Das reduziert die Arbeit beim Sperren einer Maßlinie deutlich, wenn große Bilder eingefügt sind.
+2. Maßzahlen: Textwinkel werden einheitlich normalisiert. Vertikale Maßzahlen sind immer von rechts lesbar; bei umgekehrter Zeichenrichtung kippt die Beschriftung nicht mehr auf den Kopf.
+3. CSS: index.html bindet style_patch.css jetzt ausdrücklich ein.
 
-Neue Bedienung:
-- Im Zuschneidefenster den gelben Rahmen innerhalb verschieben oder an einer Kante/Ecke ziehen.
-- Die vier Regler funktionieren weiterhin als Alternative.
-- Eingefügte Bilder werden beim Ziehen der unteren rechten Ecke standardmäßig proportional skaliert.
-- „Freie Verzerrung“ schaltet unabhängiges Ändern von Breite und Höhe ein.
-- Vorhandene Projekte und Speicherlogik bleiben in den bestehenden storage.js- und app.js-Datenstrukturen.
+Einbau:
+1. Vorher die aktuellen Dateien in GitHub herunterladen oder anderweitig sichern.
+2. Im Repository fotomass die index.html und app.js durch diese Version ersetzen.
+3. style_patch.css im selben Hauptverzeichnis ablegen.
+4. Die vorhandene style.css, storage.js, speech.js und übrige Projektdateien nicht ersetzen.
+5. GitHub Pages neu laden; auf dem iPhone die Seite schließen und erneut öffnen, falls der Cache noch die alte Version zeigt.
 
-Wichtig: Vor dem Ersetzen empfiehlt sich ein Download der aktuellen Dateien aus GitHub als Sicherung. Diese Dateien wurden lokal syntaktisch geprüft; ein vollständiger Test in Safari/iOS und im live geschalteten GitHub-Pages-Projekt steht noch aus.
+Bitte insbesondere Sperren, Entsperren, Rückgängig/Wiederholen, Projekt neu öffnen und Bild-Export auf dem iPhone testen.

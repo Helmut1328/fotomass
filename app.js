@@ -139,7 +139,18 @@
   }
 
   // ---------- Verlauf ----------
-  const snapshot = () => JSON.stringify({ measures, drawings, selectedId, selectedDrawingId, nextId });
+  // Große eingefügte Bilder nicht bei jeder Verlaufsaktion erneut als JSON serialisieren.
+  // Bilddaten bleiben im Speicher referenziert; der Verlauf speichert nur ihre ID.
+  const historyImageData = new Map();
+  const snapshot = () => {
+    const savedDrawings = drawings.map((d) => {
+      if (d.type !== "image" || !d.imageData) return d;
+      const token = String(d.id);
+      historyImageData.set(token, d.imageData);
+      return { ...d, imageData: undefined, __fmHistoryImageToken: token };
+    });
+    return JSON.stringify({ measures, drawings: savedDrawings, selectedId, selectedDrawingId, nextId });
+  };
   function pushHistory(s) {
     history.push(s);
     if (history.length > 60) history.shift();
@@ -153,7 +164,16 @@
   }
   function restoreSnapshot(str) {
     const s = JSON.parse(str);
-    measures = s.measures; drawings = s.drawings; selectedId = s.selectedId; selectedDrawingId = s.selectedDrawingId || null; nextId = s.nextId || nextId;
+    measures = s.measures;
+    drawings = (s.drawings || []).map((d) => {
+      if (!d.__fmHistoryImageToken) return d;
+      const restored = { ...d, imageData: historyImageData.get(d.__fmHistoryImageToken) };
+      delete restored.__fmHistoryImageToken;
+      return restored;
+    });
+    selectedId = s.selectedId;
+    selectedDrawingId = s.selectedDrawingId || null;
+    nextId = s.nextId || nextId;
     snapPoint = null;
   }
   function undo() {
@@ -304,6 +324,15 @@
   }
 
   // Die Maßbeschriftung kann unabhängig von der Linie positioniert werden.
+  // Technische Bemaßung: Text bleibt aufrecht. Vertikale Maße sind immer
+  // von rechts lesbar; bei umgekehrter Zeichenrichtung kippt die Beschriftung nicht.
+  function dimensionTextAngle(m) {
+    let a = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
+    while (a <= -Math.PI / 2) a += Math.PI;
+    while (a > Math.PI / 2) a -= Math.PI;
+    return a;
+  }
+
   function measureLabelPosition(m) {
     if (m.type === "angle") {
       const a1 = Math.atan2(m.y2-m.y1,m.x2-m.x1), delta = angleRadians(m), mid = a1 + delta/2;
@@ -311,8 +340,7 @@
       const radius = Math.max(18*K(),Math.min(48*K(),Math.min(arm1,arm2)*0.35));
       return {x:m.x1+Math.cos(mid)*(radius+12*K())+(m.labelOffsetX||0),y:m.y1+Math.sin(mid)*(radius+12*K())+(m.labelOffsetY||0)};
     }
-    const fs=getFontSize()*K(), angle=Math.atan2(m.y2-m.y1,m.x2-m.x1);
-    let textAngle=angle; if(textAngle>Math.PI/2||textAngle< -Math.PI/2) textAngle+=Math.PI;
+    const fs=getFontSize()*K(), textAngle=dimensionTextAngle(m);
     const offset=fs*0.75;
     return {x:(m.x1+m.x2)/2+Math.sin(textAngle)*offset+(m.labelOffsetX||0),y:(m.y1+m.y2)/2-Math.cos(textAngle)*offset+(m.labelOffsetY||0)};
   }
@@ -348,8 +376,7 @@
     const tw = g.measureText(label).width;
     const th = fs + 6 * k;
     const offset = fs * 0.75;
-    let textAngle = angle;
-    if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
+    const textAngle = dimensionTextAngle(m);
     g.translate((m.x1 + m.x2) / 2 + (m.labelOffsetX || 0), (m.y1 + m.y2) / 2 + (m.labelOffsetY || 0));
     g.rotate(textAngle);
     if (m.textBg !== false) {
@@ -1279,6 +1306,9 @@
     syncActionLock(m);
     $("actionTitle").textContent = `Maß ${measures.indexOf(m) + 1}${m.locked ? " 🔒" : ""}`;
     refresh();
+    // Das Aktionsfenster nach Sperren/Entsperren schließen, damit die Arbeitsfläche
+    // nicht weiter durch den Dialog blockiert bleibt.
+    closeActionDialog();
   });
   const closeActionDialog = () => { closeDialog(actionDialog); actionMeasureId = null; };
   $("actClose").addEventListener("click", closeActionDialog);
