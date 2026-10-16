@@ -285,6 +285,19 @@
         g.restore();
       }
     }
+    if (!forExport && selectedDrawingId) {
+      const sd = drawings.find((d) => d.id === selectedDrawingId && !["image", "text"].includes(d.type));
+      if (sd) {
+        let x1, y1, x2, y2;
+        if (sd.type === "freehand" && sd.points && sd.points.length) {
+          x1 = Math.min(...sd.points.map(p => p.x)); y1 = Math.min(...sd.points.map(p => p.y));
+          x2 = Math.max(...sd.points.map(p => p.x)); y2 = Math.max(...sd.points.map(p => p.y));
+        } else { x1 = Math.min(sd.x1, sd.x2); y1 = Math.min(sd.y1, sd.y2); x2 = Math.max(sd.x1, sd.x2); y2 = Math.max(sd.y1, sd.y2); }
+        g.save(); g.strokeStyle = "#1682d5"; g.lineWidth = scr(1.5); g.setLineDash([scr(5), scr(4)]);
+        g.strokeRect(x1-scr(8), y1-scr(8), Math.max(scr(16),x2-x1+scr(16)), Math.max(scr(16),y2-y1+scr(16)));
+        g.setLineDash([]); drawHandle(g, x1, y1); drawHandle(g, x2, y2); g.restore();
+      }
+    }
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
     if (tool === "angle" && anglePoints.length) {
@@ -477,7 +490,10 @@
       g.lineTo(d.x2, d.y2);
       g.stroke();
     } else if (d.type === "rect") {
-      g.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
+      const rx = Math.min(d.x1, d.x2), ry = Math.min(d.y1, d.y2);
+      const rw = Math.abs(d.x2 - d.x1), rh = Math.abs(d.y2 - d.y1);
+      if (d.fill) { g.save(); g.globalAlpha = d.fillOpacity ?? 0.28; g.fillRect(rx, ry, rw, rh); g.restore(); }
+      g.strokeRect(rx, ry, rw, rh);
     } else if (d.type === "text") {
       const fs = (d.fontSize || getFontSize() + 4) * k;
       g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
@@ -573,7 +589,7 @@
         const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2), x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
         const near = (p.x >= x1 - tol && p.x <= x2 + tol && (Math.abs(p.y - y1) < tol || Math.abs(p.y - y2) < tol)) ||
                      (p.y >= y1 - tol && p.y <= y2 + tol && (Math.abs(p.x - x1) < tol || Math.abs(p.x - x2) < tol));
-        if (near) return i;
+        if (near || (d.fill && p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2)) return i;
       } else if (d.type === "text") {
         const fs = (d.fontSize || getFontSize() + 4) * k;
         ctx.font = `bold ${fs}px system-ui, sans-serif`;
@@ -1468,7 +1484,9 @@
   });
   colorInput.addEventListener("change", () => {
     const m = measures.find((x) => x.id === selectedId);
+    const d = drawings.find((x) => x.id === selectedDrawingId);
     if (m) { remember(); m.color = colorInput.value; refresh(); }
+    else if (d && ["freehand","line","rect"].includes(d.type)) { remember(); d.color = colorInput.value; refresh(); }
   });
   unitSelect.addEventListener("change", () => {
     const m = measures.find((x) => x.id === selectedId);
@@ -1533,7 +1551,15 @@
           const armedLabel = selectedId === hit.measure.id && !hit.measure.locked;
           selectedId = hit.measure.id;
           activeDrawing = { type:"move-label", id:hit.measure.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:armedLabel, originalX:hit.measure.labelOffsetX||0, originalY:hit.measure.labelOffsetY||0 };
-          cancelLongPress(); renderMeasureList(); draw(); return;
+          cancelLongPress();
+          longPressTimer = setTimeout(() => {
+            if (activeDrawing && !activeDrawing.moved && !multiTouchMode && activeDrawing.id === hit.measure.id) {
+              const id = hit.measure.id; endGesture(); hideCrosshair();
+              try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
+              openActionDialog(id);
+            }
+          }, 550);
+          renderMeasureList(); draw(); return;
         }
         // Erst antippen = auswählen. Verschieben geht nur, wenn das Maß schon ausgewählt und nicht gesperrt ist.
         const armed = selectedId === hit.measure.id && !hit.measure.locked;
@@ -1566,6 +1592,15 @@
           const wasSelected = selectedDrawingId === imageDrawing.id;
           selectedDrawingId = imageDrawing.id;
           activeDrawing = { type: "move-text", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:{x1:imageDrawing.x1,y1:imageDrawing.y1} };
+          cancelLongPress();
+        } else if (imageDrawing) {
+          const wasSelected = selectedDrawingId === imageDrawing.id;
+          selectedDrawingId = imageDrawing.id;
+          const bounds = imageDrawing.type === "freehand" && imageDrawing.points && imageDrawing.points.length
+            ? { x1: Math.min(...imageDrawing.points.map(q=>q.x)), y1: Math.min(...imageDrawing.points.map(q=>q.y)), x2: Math.max(...imageDrawing.points.map(q=>q.x)), y2: Math.max(...imageDrawing.points.map(q=>q.y)) }
+            : { x1: Math.min(imageDrawing.x1,imageDrawing.x2), y1: Math.min(imageDrawing.y1,imageDrawing.y2), x2: Math.max(imageDrawing.x1,imageDrawing.x2), y2: Math.max(imageDrawing.y1,imageDrawing.y2) };
+          const resizeHit = wasSelected && dist(p, {x:bounds.x2,y:bounds.y2}) < scr(30);
+          activeDrawing = { type: resizeHit && imageDrawing.type !== "freehand" ? "move-resize-shape" : "move-shape", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:JSON.parse(JSON.stringify(imageDrawing)), bounds };
           cancelLongPress();
         } else { selectedDrawingId = null; }
       }
@@ -1669,6 +1704,22 @@
       }
       draw(); return;
     }
+    if (activeDrawing.type === "move-shape" || activeDrawing.type === "move-resize-shape") {
+      const d = drawings.find(x => x.id === activeDrawing.id);
+      if (!d) return;
+      activeDrawing.changed = true;
+      const dx = p.x - activeDrawing.dx, dy = p.y - activeDrawing.dy, o = activeDrawing.original;
+      if (activeDrawing.type === "move-shape") {
+        if (d.type === "freehand") d.points = o.points.map(q => ({x:q.x+dx,y:q.y+dy}));
+        else { d.x1=o.x1+dx; d.y1=o.y1+dy; d.x2=o.x2+dx; d.y2=o.y2+dy; }
+      } else {
+        const b = activeDrawing.bounds, minW = scr(12), minH = scr(12);
+        const nx2 = Math.max(b.x1+minW, b.x2+dx), ny2 = Math.max(b.y1+minH, b.y2+dy);
+        d.x1=b.x1; d.y1=b.y1; d.x2=nx2; d.y2=ny2;
+        if (d.type === "line") { d.x1=b.x1; d.y1=b.y1; }
+      }
+      draw(); return;
+    }
     if (activeDrawing.type === "move-label") {
       const m=measures.find((x)=>x.id===activeDrawing.id);
       if(!m||m.locked) return;
@@ -1748,6 +1799,10 @@
       if (a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); endGesture(); draw(); }
       else { const d = drawings.find((x) => x.id === a.id && x.type === "text"); endGesture(); draw(); if (d && a.armed && selectedDrawingId === d.id) openTextDialog(null, d); }
       return;
+    }
+    if (a.type === "move-shape" || a.type === "move-resize-shape") {
+      if (a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); }
+      endGesture(); draw(); return;
     }
     if (a.type === "move-image" || a.type === "move-resize-image") {
       if (a.moved && a.changed) { pushHistory(preSnap); scheduleAutosave(); }
