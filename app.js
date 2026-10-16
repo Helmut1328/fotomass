@@ -584,10 +584,15 @@
       if (d.type === "image") {
         const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2), x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
         if (p.x >= x1 - tol && p.x <= x2 + tol && p.y >= y1 - tol && p.y <= y2 + tol) return i;
-      } else if (d.type === "freehand" && d.points) {
+      } else if (d.type === "freehand" && d.points && d.points.length) {
+        // Treffer entlang der gesamten Linie (nicht nur an Einzelpunkten); etwas großzügiger für Touch
+        const fhTol = scr(28);
+        let hit = false;
         for (let j = 0; j < d.points.length - 1; j++) {
-          if (distanceToSegment(p, d.points[j].x, d.points[j].y, d.points[j + 1].x, d.points[j + 1].y) < tol) return i;
+          if (distanceToSegment(p, d.points[j].x, d.points[j].y, d.points[j + 1].x, d.points[j + 1].y) < fhTol) { hit = true; break; }
         }
+        if (!hit && d.points.length === 1 && dist(p, d.points[0]) < fhTol) hit = true;
+        if (hit) return i;
       } else if (d.type === "line") {
         if (distanceToSegment(p, d.x1, d.y1, d.x2, d.y2) < tol) return i;
       } else if (d.type === "rect") {
@@ -688,6 +693,11 @@
     if ((name === "measure" || name === "reference") && unitSelect.value === "°") unitSelect.value = " mm";
     if (name === "angle") setStatus("Winkel: dreimal tippen – Scheitelpunkt, erster Schenkel, zweiter Schenkel.");
     if (name === "reference") setStatus("Referenzmaß: bekannte Strecke ziehen und echten Wert eingeben. Es gilt für dieselbe Bildebene.");
+    // Füllregler immer nutzbar (Vorgabe für neue Rechtecke bzw. Änderung des ausgewählten)
+    if (typeof syncRectFillControls === "function") {
+      const sel = drawings.find((x) => x.id === selectedDrawingId && x.type === "rect");
+      syncRectFillControls(sel || null);
+    }
   }
 
   // ---------- Referenzmaß / Maßstab ----------
@@ -1502,15 +1512,16 @@
   const rectFillOpacity = $("rectFillOpacity");
   const rectFillOpacityValue = $("rectFillOpacityValue");
   function syncRectFillControls(d) {
-    // Ohne ausgewähltes Rechteck gelten die Regler als Vorgabe für das nächste Rechteck.
+    // Regler sind immer bedienbar: mit ausgewähltem Rechteck ändern sie dieses,
+    // ohne Auswahl dienen sie als Vorgabe für das nächste Rechteck.
+    if (rectFillToggle) rectFillToggle.disabled = false;
+    if (rectFillOpacity) rectFillOpacity.disabled = false;
     if (d && d.type === "rect") {
       if (rectFillToggle) rectFillToggle.checked = !!d.fill;
       const opacity = Math.round((d.fillOpacity ?? 1) * 100);
       if (rectFillOpacity) rectFillOpacity.value = String(opacity);
     }
     if (rectFillOpacityValue && rectFillOpacity) rectFillOpacityValue.textContent = rectFillOpacity.value + "%";
-    if (rectFillToggle) rectFillToggle.disabled = false;
-    if (rectFillOpacity) rectFillOpacity.disabled = false;
   }
   if (rectFillToggle) rectFillToggle.addEventListener("change", () => {
     const d = drawings.find(x => x.id === selectedDrawingId && x.type === "rect");

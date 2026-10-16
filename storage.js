@@ -162,24 +162,38 @@
         isReference: m.isReference === true || m.type === "reference",
         autoCalculated: m.autoCalculated === true,
         value: cleanValue(m.value), unit: unitOr(m.unit), color: colorOr(m.color), textBg: m.textBg !== false,
-        label: cleanText(m.label, 40), locked: m.locked === true
+        label: cleanText(m.label, 40), locked: m.locked === true,
+        labelLocked: m.labelLocked === true,
+        labelOffsetX: isNum(m.labelOffsetX) ? m.labelOffsetX : 0,
+        labelOffsetY: isNum(m.labelOffsetY) ? m.labelOffsetY : 0
       }));
 
     const drawings = (Array.isArray(raw.drawings) ? raw.drawings : []).slice(0, 5000)
       .filter((d) => d && ["freehand", "line", "rect", "text", "image"].includes(d.type))
       .filter((d) => d.type !== "image" || (typeof d.imageData === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(d.imageData) && d.imageData.length < 12e6))
-      .map((d, i) => ({
-        id: isNum(d.id) ? d.id : 200000 + i, type: d.type,
-        x1: isNum(d.x1) ? d.x1 : 0, y1: isNum(d.y1) ? d.y1 : 0, x2: isNum(d.x2) ? d.x2 : 0, y2: isNum(d.y2) ? d.y2 : 0,
-        color: colorOr(d.color),
-        width: isNum(d.width) && d.width > 0 ? Math.min(d.width, 40) : 4,
-        fontSize: isNum(d.fontSize) && d.fontSize > 0 ? Math.min(d.fontSize, 120) : undefined,
-        text: d.type === "text" ? cleanText(d.text, 200) : undefined,
-        imageData: d.type === "image" ? d.imageData : undefined,
-        sourceName: d.type === "image" ? cleanText(d.sourceName, 100) : undefined,
-        points: d.type === "freehand" && Array.isArray(d.points)
-          ? d.points.slice(0, 20000).filter((p) => p && isNum(p.x) && isNum(p.y)).map((p) => ({ x: p.x, y: p.y })) : undefined
-      }));
+      .map((d, i) => {
+        const out = {
+          id: isNum(d.id) ? d.id : 200000 + i, type: d.type,
+          x1: isNum(d.x1) ? d.x1 : 0, y1: isNum(d.y1) ? d.y1 : 0, x2: isNum(d.x2) ? d.x2 : 0, y2: isNum(d.y2) ? d.y2 : 0,
+          color: colorOr(d.color),
+          width: isNum(d.width) && d.width > 0 ? Math.min(d.width, 40) : 4,
+          fontSize: isNum(d.fontSize) && d.fontSize > 0 ? Math.min(d.fontSize, 120) : undefined,
+          text: d.type === "text" ? cleanText(d.text, 200) : undefined,
+          imageData: d.type === "image" ? d.imageData : undefined,
+          sourceName: d.type === "image" ? cleanText(d.sourceName, 100) : undefined,
+          points: d.type === "freehand" && Array.isArray(d.points)
+            ? d.points.slice(0, 20000).filter((p) => p && isNum(p.x) && isNum(p.y)).map((p) => ({ x: p.x, y: p.y })) : undefined
+        };
+        // Rechteck: Füllung, Transparenz und Drehung beim Laden erhalten
+        if (d.type === "rect") {
+          out.fill = d.fill === true;
+          out.fillOpacity = isNum(d.fillOpacity) ? Math.max(0, Math.min(1, d.fillOpacity)) : 1;
+          out.rotation = isNum(d.rotation) ? d.rotation : 0;
+        }
+        // Text: Hintergrundflag
+        if (d.type === "text") out.textBg = d.textBg !== false;
+        return out;
+      });
 
     const maxId = Math.max(0, ...measures.map((m) => m.id), ...drawings.map((d) => d.id));
     const original = typeof raw.originalData === "string" && /^data:image\/[a-z0-9.+-]+;base64,/.test(raw.originalData) && raw.originalData.length < 150e6
