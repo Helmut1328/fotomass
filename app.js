@@ -595,7 +595,7 @@
         const cx=(x1+x2)/2, cy=(y1+y2)/2, a=-(d.rotation||0), dx=p.x-cx, dy=p.y-cy;
         const q={x:cx+dx*Math.cos(a)-dy*Math.sin(a),y:cy+dx*Math.sin(a)+dy*Math.cos(a)};
         const near = q.x >= x1-tol && q.x <= x2+tol && q.y >= y1-tol && q.y <= y2+tol && (Math.abs(q.x-x1)<tol || Math.abs(q.x-x2)<tol || Math.abs(q.y-y1)<tol || Math.abs(q.y-y2)<tol);
-        if (near || (d.fill && q.x >= x1 && q.x <= x2 && q.y >= y1 && q.y <= y2) || (Math.abs(p.x-cx)<tol && Math.abs(p.y-(y1-scr(24)))<tol && selectedDrawingId===d.id)) return i;
+        if (near || (q.x >= x1 && q.x <= x2 && q.y >= y1 && q.y <= y2) || (Math.abs(p.x-cx)<tol && Math.abs(p.y-(y1-scr(24)))<tol && selectedDrawingId===d.id)) return i;
       } else if (d.type === "text") {
         const fs = (d.fontSize || getFontSize() + 4) * k;
         ctx.font = `bold ${fs}px system-ui, sans-serif`;
@@ -1502,26 +1502,30 @@
   const rectFillOpacity = $("rectFillOpacity");
   const rectFillOpacityValue = $("rectFillOpacityValue");
   function syncRectFillControls(d) {
-    if (rectFillToggle) rectFillToggle.checked = !!(d && d.type === "rect" && d.fill);
-    const opacity = d && d.type === "rect" ? Math.round((d.fillOpacity ?? 1) * 100) : 100;
-    if (rectFillOpacity) rectFillOpacity.value = String(opacity);
-    if (rectFillOpacityValue) rectFillOpacityValue.textContent = opacity + "%";
-    if (rectFillToggle) rectFillToggle.disabled = !(d && d.type === "rect");
-    if (rectFillOpacity) rectFillOpacity.disabled = !(d && d.type === "rect");
+    // Ohne ausgewähltes Rechteck gelten die Regler als Vorgabe für das nächste Rechteck.
+    if (d && d.type === "rect") {
+      if (rectFillToggle) rectFillToggle.checked = !!d.fill;
+      const opacity = Math.round((d.fillOpacity ?? 1) * 100);
+      if (rectFillOpacity) rectFillOpacity.value = String(opacity);
+    }
+    if (rectFillOpacityValue && rectFillOpacity) rectFillOpacityValue.textContent = rectFillOpacity.value + "%";
+    if (rectFillToggle) rectFillToggle.disabled = false;
+    if (rectFillOpacity) rectFillOpacity.disabled = false;
   }
   if (rectFillToggle) rectFillToggle.addEventListener("change", () => {
     const d = drawings.find(x => x.id === selectedDrawingId && x.type === "rect");
-    if (!d) { toast("Bitte zuerst ein Rechteck auswählen."); rectFillToggle.checked = false; return; }
-    remember(); d.fill = rectFillToggle.checked;
-    if (d.fill && d.fillOpacity == null) d.fillOpacity = 1;
-    refresh();
+    if (d) {
+      remember(); d.fill = rectFillToggle.checked;
+      if (d.fill && d.fillOpacity == null) d.fillOpacity = Number(rectFillOpacity.value) / 100;
+      refresh();
+    }
   });
   if (rectFillOpacity) rectFillOpacity.addEventListener("input", () => {
+    if (rectFillOpacityValue) rectFillOpacityValue.textContent = rectFillOpacity.value + "%";
     const d = drawings.find(x => x.id === selectedDrawingId && x.type === "rect");
-    if (!d) return;
+    if (!d) return; // Reglerwert bleibt als Vorgabe für neue Rechtecke erhalten.
     if (!rectFillOpacity.dataset.fmRemembered) { remember(); rectFillOpacity.dataset.fmRemembered = "1"; }
     d.fillOpacity = Number(rectFillOpacity.value) / 100;
-    if (rectFillOpacityValue) rectFillOpacityValue.textContent = rectFillOpacity.value + "%";
     draw(); scheduleAutosave();
   });
   if (rectFillOpacity) rectFillOpacity.addEventListener("change", () => { delete rectFillOpacity.dataset.fmRemembered; });
@@ -1664,7 +1668,12 @@
         } else { selectedDrawingId = null; }
       }
       $("textBgToggle").checked = selectedId ? (measures.find(x => x.id === selectedId)?.textBg !== false) : true;
-      syncRectFillControls(drawings.find(x=>x.id===selectedDrawingId && x.type==="rect"));
+      const selectedDrawing = drawings.find(x => x.id === selectedDrawingId);
+      if (selectedDrawing && ["freehand", "line", "rect"].includes(selectedDrawing.type)) {
+        widthInput.value = String(selectedDrawing.width || 4);
+        colorInput.value = selectedDrawing.color || "#ff3b30";
+      }
+      syncRectFillControls(selectedDrawing && selectedDrawing.type === "rect" ? selectedDrawing : null);
       draw();
       return;
     }
@@ -1702,6 +1711,7 @@
       color: colorInput.value, width: Number(widthInput.value),
       points: tool === "freehand" ? [p] : undefined,
       fill: tool === "rect" ? !!(rectFillToggle && rectFillToggle.checked) : false,
+      fillOpacity: tool === "rect" && rectFillOpacity ? Number(rectFillOpacity.value) / 100 : 1,
       value: "", unit: unitSelect.value
     };
   }
