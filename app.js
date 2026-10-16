@@ -1319,6 +1319,7 @@
     actionMeasureId = id;
     actionColorRemembered = false;
     selectedId = id;
+    syncQuickMeasureLock();
     $("actionTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1}: ${m.value ? fmt(m.value) + (m.unit || "") : "kein Wert"}`;
     $("actColor").value = m.color || "#ff3b30";
     syncActionLock(m);
@@ -1338,6 +1339,7 @@
     remember();
     m.locked = !m.locked;
     syncActionLock(m);
+    syncQuickMeasureLock();
     $("actionTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1}${m.locked ? " 🔒" : ""}`;
     refresh();
     toast(m.locked ? "Maßlinie gesperrt." : "Maßlinie entsperrt.");
@@ -1510,7 +1512,37 @@
   });
   const rectFillToggle = $("rectFillToggle");
   const rectFillOpacity = $("rectFillOpacity");
+  const rectFillOpacityNumber = $("rectFillOpacityNumber");
   const rectFillOpacityValue = $("rectFillOpacityValue");
+  function setOpacityControl(value) {
+    const n = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    if (rectFillOpacity) rectFillOpacity.value = String(n);
+    if (rectFillOpacityNumber) rectFillOpacityNumber.value = String(n);
+    if (rectFillOpacityValue) rectFillOpacityValue.textContent = n + "%";
+    const d = drawings.find(x => x.id === selectedDrawingId && x.type === "rect");
+    if (d) {
+      if (!rectFillOpacity?.dataset.fmRemembered) { remember(); if (rectFillOpacity) rectFillOpacity.dataset.fmRemembered = "1"; }
+      d.fillOpacity = n / 100;
+      draw(); scheduleAutosave();
+    }
+  }
+  function syncQuickMeasureLock() {
+    const btn = $("quickMeasureLock");
+    if (!btn) return;
+    const m = measures.find(x => x.id === selectedId);
+    btn.disabled = !m;
+    btn.textContent = m && m.locked ? "🔓 Maßlinie entsperren" : "🔒 Maßlinie sperren";
+  }
+  const quickMeasureLock = $("quickMeasureLock");
+  if (quickMeasureLock) quickMeasureLock.addEventListener("click", () => {
+    const m = measures.find(x => x.id === selectedId);
+    if (!m) { toast("Bitte zuerst eine Maßlinie antippen."); return; }
+    remember();
+    m.locked = !m.locked;
+    syncQuickMeasureLock();
+    refresh();
+    toast(m.locked ? "Maßlinie gesperrt – sie kann nicht mehr verschoben werden." : "Maßlinie entsperrt.");
+  });
   function syncRectFillControls(d) {
     // Regler sind immer bedienbar: mit ausgewähltem Rechteck ändern sie dieses,
     // ohne Auswahl dienen sie als Vorgabe für das nächste Rechteck.
@@ -1520,6 +1552,7 @@
       if (rectFillToggle) rectFillToggle.checked = !!d.fill;
       const opacity = Math.round((d.fillOpacity ?? 1) * 100);
       if (rectFillOpacity) rectFillOpacity.value = String(opacity);
+      if (rectFillOpacityNumber) rectFillOpacityNumber.value = String(opacity);
     }
     if (rectFillOpacityValue && rectFillOpacity) rectFillOpacityValue.textContent = rectFillOpacity.value + "%";
   }
@@ -1532,13 +1565,25 @@
     }
   });
   if (rectFillOpacity) rectFillOpacity.addEventListener("input", () => {
+    if (rectFillOpacityNumber) rectFillOpacityNumber.value = rectFillOpacity.value;
     if (rectFillOpacityValue) rectFillOpacityValue.textContent = rectFillOpacity.value + "%";
     const d = drawings.find(x => x.id === selectedDrawingId && x.type === "rect");
-    if (!d) return; // Reglerwert bleibt als Vorgabe für neue Rechtecke erhalten.
+    if (!d) return; // Wert gilt als Vorgabe für neu gezeichnete Rechtecke.
     if (!rectFillOpacity.dataset.fmRemembered) { remember(); rectFillOpacity.dataset.fmRemembered = "1"; }
     d.fillOpacity = Number(rectFillOpacity.value) / 100;
     draw(); scheduleAutosave();
   });
+  if (rectFillOpacityNumber) {
+    rectFillOpacityNumber.addEventListener("input", () => {
+      const raw = rectFillOpacityNumber.value;
+      if (raw === "") return;
+      setOpacityControl(raw);
+    });
+    rectFillOpacityNumber.addEventListener("change", () => {
+      setOpacityControl(rectFillOpacityNumber.value);
+      if (rectFillOpacity) delete rectFillOpacity.dataset.fmRemembered;
+    });
+  }
   if (rectFillOpacity) rectFillOpacity.addEventListener("change", () => { delete rectFillOpacity.dataset.fmRemembered; });
   widthInput.addEventListener("input", () => {
     const d = drawings.find(x => x.id === selectedDrawingId && ["freehand","line","rect"].includes(x.type));
@@ -1629,6 +1674,7 @@
         // Erst antippen = auswählen. Verschieben geht nur, wenn das Maß schon ausgewählt und nicht gesperrt ist.
         const armed = selectedId === hit.measure.id && !hit.measure.locked;
         selectedId = hit.measure.id;
+        syncQuickMeasureLock();
         activeDrawing = hit.endpoint
           ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false, changed: false, armed }
           : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2, x3: hit.measure.x3, y3: hit.measure.y3 } };
@@ -1645,6 +1691,7 @@
         }, 550);
       } else {
         selectedId = null;
+        syncQuickMeasureLock();
         const drawIndex = hitDrawing(p);
         const imageDrawing = drawIndex >= 0 ? drawings[drawIndex] : null;
         if (imageDrawing && imageDrawing.type === "image") {
