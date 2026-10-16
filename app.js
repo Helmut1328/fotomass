@@ -1328,7 +1328,6 @@
   }
   function syncActionLock(m) {
     $("actLock").textContent = m.locked ? "🔓 Maßlinie entsperren" : "🔒 Maßlinie sperren";
-    if ($("actLabelLock")) $("actLabelLock").textContent = m.labelLocked ? "🔓 Maßzahl entsperren" : "🔒 Maßzahl sperren";
     ["actValue", "actMic", "actDelete"].forEach((id) => { $(id).disabled = !!m.locked; });
     $("actColor").disabled = !!m.locked;
   }
@@ -1338,21 +1337,12 @@
     if (!m) return;
     remember();
     m.locked = !m.locked;
+    m.labelLocked = m.locked; // Maßlinie und zugehörige Maßzahl immer gemeinsam sperren
     syncActionLock(m);
     syncQuickMeasureLock();
     $("actionTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1}${m.locked ? " 🔒" : ""}`;
     refresh();
     toast(m.locked ? "Maßlinie gesperrt." : "Maßlinie entsperrt.");
-  });
-  $("actLabelLock").addEventListener("click", (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const m = measures.find(x => x.id === actionMeasureId);
-    if (!m) return;
-    remember();
-    m.labelLocked = !m.labelLocked;
-    syncActionLock(m);
-    refresh();
-    toast(m.labelLocked ? "Maßzahl gesperrt." : "Maßzahl entsperrt.");
   });
   const closeActionDialog = () => { closeDialog(actionDialog); actionMeasureId = null; };
   $("actClose").addEventListener("click", closeActionDialog);
@@ -1539,9 +1529,11 @@
     if (!m) { toast("Bitte zuerst eine Maßlinie antippen."); return; }
     remember();
     m.locked = !m.locked;
+    m.labelLocked = m.locked; // Maßlinie und zugehörige Maßzahl gemeinsam sperren/entsperren
     syncQuickMeasureLock();
+    syncActionLock(m);
     refresh();
-    toast(m.locked ? "Maßlinie gesperrt – sie kann nicht mehr verschoben werden." : "Maßlinie entsperrt.");
+    toast(m.locked ? "Maßlinie und Maßzahl gesperrt – beide bleiben unverändert." : "Maßlinie und Maßzahl entsperrt.");
   });
   function syncRectFillControls(d) {
     // Regler sind immer bedienbar: mit ausgewähltem Rechteck ändern sie dieses,
