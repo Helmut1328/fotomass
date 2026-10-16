@@ -497,7 +497,7 @@
       const rw = Math.abs(d.x2 - d.x1), rh = Math.abs(d.y2 - d.y1);
       const cx = rx + rw / 2, cy = ry + rh / 2;
       g.translate(cx, cy); g.rotate(d.rotation || 0);
-      if (d.fill) { g.save(); g.globalAlpha = d.fillOpacity ?? 0.28; g.fillRect(-rw/2, -rh/2, rw, rh); g.restore(); }
+      if (d.fill) { g.save(); g.globalAlpha = Math.max(0, Math.min(1, Number(d.fillOpacity ?? 1))); g.fillRect(-rw/2, -rh/2, rw, rh); g.restore(); }
       g.strokeRect(-rw/2, -rh/2, rw, rh);
     } else if (d.type === "text") {
       const fs = (d.fontSize || getFontSize() + 4) * k;
@@ -1321,23 +1321,26 @@
     ["actValue", "actMic", "actDelete"].forEach((id) => { $(id).disabled = !!m.locked; });
     $("actColor").disabled = !!m.locked;
   }
-  $("actLock").addEventListener("click", () => {
+  $("actLock").addEventListener("click", (e) => {
+    e.preventDefault(); e.stopPropagation();
     const m = measures.find((x) => x.id === actionMeasureId);
     if (!m) return;
     remember();
     m.locked = !m.locked;
     syncActionLock(m);
-    $("actionTitle").textContent = `Maß ${measures.indexOf(m) + 1}${m.locked ? " 🔒" : ""}`;
+    $("actionTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1}${m.locked ? " 🔒" : ""}`;
     refresh();
-    // Das Aktionsfenster nach Sperren/Entsperren schließen, damit die Arbeitsfläche
-    // nicht weiter durch den Dialog blockiert bleibt.
-    closeActionDialog();
+    toast(m.locked ? "Maßlinie gesperrt." : "Maßlinie entsperrt.");
   });
-  $("actLabelLock").addEventListener("click", () => {
-    const m = measures.find(x => x.id === actionMeasureId); if (!m) return;
-    remember(); m.labelLocked = !m.labelLocked;
-    $("actLabelLock").textContent = m.labelLocked ? "🔓 Maßzahl entsperren" : "🔒 Maßzahl sperren";
+  $("actLabelLock").addEventListener("click", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const m = measures.find(x => x.id === actionMeasureId);
+    if (!m) return;
+    remember();
+    m.labelLocked = !m.labelLocked;
+    syncActionLock(m);
     refresh();
+    toast(m.labelLocked ? "Maßzahl gesperrt." : "Maßzahl entsperrt.");
   });
   const closeActionDialog = () => { closeDialog(actionDialog); actionMeasureId = null; };
   $("actClose").addEventListener("click", closeActionDialog);
@@ -1496,11 +1499,32 @@
     $("styleToggle").textContent = document.body.classList.contains("site-bold") ? "Technisch" : "Baustellenstil";
   });
   const rectFillToggle = $("rectFillToggle");
+  const rectFillOpacity = $("rectFillOpacity");
+  const rectFillOpacityValue = $("rectFillOpacityValue");
+  function syncRectFillControls(d) {
+    if (rectFillToggle) rectFillToggle.checked = !!(d && d.type === "rect" && d.fill);
+    const opacity = d && d.type === "rect" ? Math.round((d.fillOpacity ?? 1) * 100) : 100;
+    if (rectFillOpacity) rectFillOpacity.value = String(opacity);
+    if (rectFillOpacityValue) rectFillOpacityValue.textContent = opacity + "%";
+    if (rectFillToggle) rectFillToggle.disabled = !(d && d.type === "rect");
+    if (rectFillOpacity) rectFillOpacity.disabled = !(d && d.type === "rect");
+  }
   if (rectFillToggle) rectFillToggle.addEventListener("change", () => {
     const d = drawings.find(x => x.id === selectedDrawingId && x.type === "rect");
     if (!d) { toast("Bitte zuerst ein Rechteck auswählen."); rectFillToggle.checked = false; return; }
-    remember(); d.fill = rectFillToggle.checked; refresh();
+    remember(); d.fill = rectFillToggle.checked;
+    if (d.fill && d.fillOpacity == null) d.fillOpacity = 1;
+    refresh();
   });
+  if (rectFillOpacity) rectFillOpacity.addEventListener("input", () => {
+    const d = drawings.find(x => x.id === selectedDrawingId && x.type === "rect");
+    if (!d) return;
+    if (!rectFillOpacity.dataset.fmRemembered) { remember(); rectFillOpacity.dataset.fmRemembered = "1"; }
+    d.fillOpacity = Number(rectFillOpacity.value) / 100;
+    if (rectFillOpacityValue) rectFillOpacityValue.textContent = rectFillOpacity.value + "%";
+    draw(); scheduleAutosave();
+  });
+  if (rectFillOpacity) rectFillOpacity.addEventListener("change", () => { delete rectFillOpacity.dataset.fmRemembered; });
   widthInput.addEventListener("input", () => {
     const d = drawings.find(x => x.id === selectedDrawingId && ["freehand","line","rect"].includes(x.type));
     if (!d) return;
@@ -1640,7 +1664,7 @@
         } else { selectedDrawingId = null; }
       }
       $("textBgToggle").checked = selectedId ? (measures.find(x => x.id === selectedId)?.textBg !== false) : true;
-      if (rectFillToggle) { const picked=drawings.find(x=>x.id===selectedDrawingId && x.type==="rect"); rectFillToggle.checked=!!(picked&&picked.fill); }
+      syncRectFillControls(drawings.find(x=>x.id===selectedDrawingId && x.type==="rect"));
       draw();
       return;
     }
