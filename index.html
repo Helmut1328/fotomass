@@ -12,6 +12,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style_patch.css">
   <title>FotoMaß</title>
 </head>
 <body>
@@ -80,8 +81,9 @@
         <div class="button-row image-tools">
           <button id="insertImageButton" class="secondary" type="button">🖼 Bild einfügen / zuschneiden</button>
           <input id="insertImageInput" type="file" accept="image/*" hidden>
+          <label class="free-resize-option"><input id="freeResizeToggle" type="checkbox"> Freie Verzerrung</label>
         </div>
-        <p class="hint">Bild auswählen, Ausschnitt einstellen und einfügen. Eingefügte Bilder lassen sich mit „Auswählen“ verschieben und an der unteren rechten Ecke skalieren.</p>
+        <p class="hint">Bild auswählen, den gelben Zuschneiderahmen direkt ziehen und einfügen. Danach mit „Auswählen“ verschieben; Größe standardmäßig proportional ändern. „Freie Verzerrung“ erlaubt unabhängige Breite und Höhe.</p>
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
           <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>

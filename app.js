@@ -43,6 +43,8 @@
   const insertImageInput = $("insertImageInput");
   const cropPreviewCanvas = $("cropPreviewCanvas");
   const cropPreviewCtx = cropPreviewCanvas.getContext("2d");
+  const freeResizeToggle = $("freeResizeToggle");
+  let cropDrag = null;
   const buttons = {
     undo: $("undo"), redo: $("redo"), export: $("exportImage"), exportProject: $("exportProject"),
     clear: $("clearAll"), save: $("saveProject"), load: $("loadProject"), importProject: $("importProject")
@@ -1310,18 +1312,72 @@
   // ---------- Bilder einfügen und zuschneiden (Version 4) ----------
   const imageCropDialog = $("imageCropDialog");
   const cropInputs = [$("cropLeft"), $("cropRight"), $("cropTop"), $("cropBottom")];
+  function cropBounds() {
+    const iw = cropSourceImage.naturalWidth, ih = cropSourceImage.naturalHeight;
+    return {
+      l: Number($("cropLeft").value) / 100, r: Number($("cropRight").value) / 100,
+      t: Number($("cropTop").value) / 100, b: Number($("cropBottom").value) / 100,
+      iw, ih
+    };
+  }
   function paintCropPreview() {
     if (!cropSourceImage) return;
     const iw = cropSourceImage.naturalWidth, ih = cropSourceImage.naturalHeight;
-    const l = Number($("cropLeft").value) / 100, r = Number($("cropRight").value) / 100;
-    const t = Number($("cropTop").value) / 100, b = Number($("cropBottom").value) / 100;
-    const sx = Math.round(iw*l), sy = Math.round(ih*t);
-    const sw = Math.max(1, Math.round(iw*(1-l-r))), sh = Math.max(1, Math.round(ih*(1-t-b)));
-    cropPreviewCanvas.width = Math.min(900, sw); cropPreviewCanvas.height = Math.max(1, Math.round(cropPreviewCanvas.width * sh / sw));
-    if (cropPreviewCanvas.height > 600) { cropPreviewCanvas.height=600; cropPreviewCanvas.width=Math.max(1,Math.round(cropPreviewCanvas.height*sw/sh)); }
-    cropPreviewCtx.clearRect(0,0,cropPreviewCanvas.width,cropPreviewCanvas.height);
-    cropPreviewCtx.drawImage(cropSourceImage,sx,sy,sw,sh,0,0,cropPreviewCanvas.width,cropPreviewCanvas.height);
+    const scale = Math.min(900 / iw, 600 / ih, 1);
+    cropPreviewCanvas.width = Math.max(1, Math.round(iw * scale));
+    cropPreviewCanvas.height = Math.max(1, Math.round(ih * scale));
+    const w = cropPreviewCanvas.width, h = cropPreviewCanvas.height;
+    const { l, r, t, b } = cropBounds();
+    const x = l*w, y = t*h, cw = Math.max(1, (1-l-r)*w), ch = Math.max(1, (1-t-b)*h);
+    cropPreviewCtx.clearRect(0, 0, w, h);
+    cropPreviewCtx.drawImage(cropSourceImage, 0, 0, w, h);
+    cropPreviewCtx.fillStyle = "rgba(0,0,0,.48)";
+    cropPreviewCtx.fillRect(0, 0, w, y); cropPreviewCtx.fillRect(0, y+ch, w, h-y-ch);
+    cropPreviewCtx.fillRect(0, y, x, ch); cropPreviewCtx.fillRect(x+cw, y, w-x-cw, ch);
+    cropPreviewCtx.strokeStyle = "#ffca28"; cropPreviewCtx.lineWidth = Math.max(2, w/300);
+    cropPreviewCtx.setLineDash([]); cropPreviewCtx.strokeRect(x, y, cw, ch);
+    const hs = Math.max(7, Math.min(14, w/35)); cropPreviewCtx.fillStyle = "#fff";
+    [[x,y],[x+cw,y],[x,y+ch],[x+cw,y+ch]].forEach(([hx,hy])=>cropPreviewCtx.fillRect(hx-hs/2,hy-hs/2,hs,hs));
   }
+  function cropPointerDown(e) {
+    if (!cropSourceImage) return;
+    e.preventDefault(); cropPreviewCanvas.setPointerCapture(e.pointerId);
+    const rect = cropPreviewCanvas.getBoundingClientRect();
+    const px = (e.clientX-rect.left)/rect.width, py = (e.clientY-rect.top)/rect.height;
+    const b = cropBounds(), x1=b.l, x2=1-b.r, y1=b.t, y2=1-b.b, edge=0.045;
+    const nearL=Math.abs(px-x1)<edge, nearR=Math.abs(px-x2)<edge, nearT=Math.abs(py-y1)<edge, nearB=Math.abs(py-y2)<edge;
+    let mode = (nearL||nearR||nearT||nearB) ? "resize" : "move";
+    if (mode === "resize" && !(nearL||nearR||nearT||nearB)) mode="move";
+    cropDrag={x:px,y:py,b:{l:b.l,r:b.r,t:b.t,b:b.b},edges:{l:nearL,r:nearR,t:nearT,b:nearB},mode};
+  }
+  function cropPointerMove(e) {
+    if (!cropDrag || !cropSourceImage) return;
+    e.preventDefault();
+    const rect=cropPreviewCanvas.getBoundingClientRect();
+    const px=(e.clientX-rect.left)/rect.width, py=(e.clientY-rect.top)/rect.height;
+    const dx=px-cropDrag.x, dy=py-cropDrag.y, o=cropDrag.b, ed=cropDrag.edges;
+    let l=o.l,r=o.r,t=o.t,b=o.b;
+    if (cropDrag.mode === "move") {
+      const width=1-o.l-o.r, height=1-o.t-o.b;
+      l=Math.min(1-width,Math.max(0,o.l+dx)); r=1-width-l;
+      t=Math.min(1-height,Math.max(0,o.t+dy)); b=1-height-t;
+    } else {
+      if(ed.l) l=Math.min(0.8,Math.max(0, o.l+dx));
+      if(ed.r) r=Math.min(0.8,Math.max(0, o.r-dx));
+      if(ed.t) t=Math.min(0.8,Math.max(0, o.t+dy));
+      if(ed.b) b=Math.min(0.8,Math.max(0, o.b-dy));
+      if(l+r>0.8){if(ed.l)l=0.8-r;else r=0.8-l;}
+      if(t+b>0.8){if(ed.t)t=0.8-b;else b=0.8-t;}
+    }
+    $("cropLeft").value=Math.round(l*100); $("cropRight").value=Math.round(r*100);
+    $("cropTop").value=Math.round(t*100); $("cropBottom").value=Math.round(b*100);
+    paintCropPreview();
+  }
+  function cropPointerUp(){cropDrag=null;}
+  cropPreviewCanvas.addEventListener("pointerdown", cropPointerDown);
+  cropPreviewCanvas.addEventListener("pointermove", cropPointerMove);
+  cropPreviewCanvas.addEventListener("pointerup", cropPointerUp);
+  cropPreviewCanvas.addEventListener("pointercancel", cropPointerUp);
   function closeCropDialog() { closeDialog(imageCropDialog); cropSourceImage = null; cropSourceName = ""; }
   $("insertImageButton").addEventListener("click", () => {
     if (!photoLoaded) { setStatus("Bitte zuerst ein Hauptfoto laden."); return; }
@@ -1362,7 +1418,7 @@
     remember(); const id=nextId++;
     const item={id,type:"image",x1:x,y1:y,x2:x+w,y2:y+h,imageData,sourceName:cropSourceName};
     drawings.push(item); drawingImageCache.delete(id); selectedDrawingId=id; selectedId=null;
-    closeCropDialog(); setTool("select"); refresh(); setStatus("Bild eingefügt. Mit Auswählen verschieben; an der unteren rechten Ecke skalieren. Löschen über Radierer.");
+    closeCropDialog(); setTool("select"); refresh(); setStatus("Bild eingefügt. Mit Auswählen verschieben; an der unteren rechten Ecke standardmäßig proportional skalieren. Freie Verzerrung lässt sich unten einschalten.");
   });
 
   // ---------- Werkzeug-Leiste & Einstellungen ----------
@@ -1474,7 +1530,7 @@
           const wasSelected = selectedDrawingId === imageDrawing.id;
           selectedDrawingId = imageDrawing.id;
           const resizeHit = wasSelected && dist(p, {x:imageDrawing.x2, y:imageDrawing.y2}) < scr(30);
-          activeDrawing = { type: resizeHit ? "move-resize-image" : "move-image", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:{x1:imageDrawing.x1,y1:imageDrawing.y1,x2:imageDrawing.x2,y2:imageDrawing.y2} };
+          activeDrawing = { type: resizeHit ? "move-resize-image" : "move-image", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, aspectRatio:(imageDrawing.y2-imageDrawing.y1)/Math.max(1,imageDrawing.x2-imageDrawing.x1), original:{x1:imageDrawing.x1,y1:imageDrawing.y1,x2:imageDrawing.x2,y2:imageDrawing.y2} };
           cancelLongPress();
         } else if (imageDrawing && imageDrawing.type === "text") {
           const wasSelected = selectedDrawingId === imageDrawing.id;
@@ -1573,8 +1629,13 @@
         d.x1 = activeDrawing.original.x1 + dx; d.y1 = activeDrawing.original.y1 + dy;
         d.x2 = activeDrawing.original.x2 + dx; d.y2 = activeDrawing.original.y2 + dy;
       } else {
-        d.x2 = Math.max(d.x1 + scr(40), activeDrawing.original.x2 + dx);
-        d.y2 = Math.max(d.y1 + scr(40), activeDrawing.original.y2 + dy);
+        const minW = scr(40), minH = scr(40);
+        d.x2 = Math.max(d.x1 + minW, activeDrawing.original.x2 + dx);
+        if (freeResizeToggle.checked) {
+          d.y2 = Math.max(d.y1 + minH, activeDrawing.original.y2 + dy);
+        } else {
+          d.y2 = d.y1 + Math.max(minH, (d.x2 - d.x1) * activeDrawing.aspectRatio);
+        }
       }
       draw(); return;
     }
