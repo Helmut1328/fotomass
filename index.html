@@ -64,7 +64,16 @@
           Fadenkreuz
         </label>
       </div>
-      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden neue Maßlinien berechnet</p>
+      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden Maßlinienwerte aus dem Maßstab berechnet</p>
+      <div class="auto-mode-row panel-subtle" aria-label="Automatische Maßlinienfunktion">
+        <label for="autoMeasureMode"><strong>Maßlinien-Automatik</strong>
+          <select id="autoMeasureMode">
+            <option value="suggestions">Modus C: Vorschläge prüfen</option>
+            <option value="maximum">Modus C: Maximale Automatik</option>
+          </select>
+        </label>
+        <p id="autoMeasureModeHint" class="hint">Berechnete Werte werden als Vorschlag geöffnet und können vor dem Übernehmen geprüft oder geändert werden.</p>
+      </div>
 
       <div class="toolbox">
         <div class="tool-grid">

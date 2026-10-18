@@ -721,6 +721,24 @@
       }
     });
   }
+  const autoMeasureMode = $("autoMeasureMode");
+  const autoMeasureModeHint = $("autoMeasureModeHint");
+  function currentAutoMeasureMode() { return autoMeasureMode && autoMeasureMode.value === "maximum" ? "maximum" : "suggestions"; }
+  function updateAutoMeasureModeHint() {
+    if (!autoMeasureModeHint) return;
+    autoMeasureModeHint.textContent = currentAutoMeasureMode() === "maximum"
+      ? "Maximale Automatik: Neue Maßlinien werden mit vorhandenem Referenzmaß direkt berechnet. Die Bildkanten selbst werden nicht automatisch erkannt."
+      : "Vorschläge prüfen: Neue Maßlinienwerte werden berechnet und zur Kontrolle geöffnet. Du kannst sie übernehmen oder ändern.";
+  }
+  try { if (autoMeasureMode) autoMeasureMode.value = localStorage.getItem("fm-auto-measure-mode") === "maximum" ? "maximum" : "suggestions"; } catch (_) {}
+  if (autoMeasureMode) {
+    updateAutoMeasureModeHint();
+    autoMeasureMode.addEventListener("change", () => {
+      try { localStorage.setItem("fm-auto-measure-mode", currentAutoMeasureMode()); } catch (_) {}
+      updateAutoMeasureModeHint();
+      setStatus(currentAutoMeasureMode() === "maximum" ? "Maximale Automatik aktiviert." : "Vorschlagsmodus aktiviert.");
+    });
+  }
   function calculateEmptyMeasuresFromReference() {
     measures.forEach((m) => {
       if (m.type !== "angle" && !m.isReference && !String(m.value || "").trim()) {
@@ -1983,8 +2001,11 @@
     // Referenzlinie benötigt den bekannten echten Wert; normale Linien fragen nur dann nach, wenn kein Maßstab existiert.
     if (newMeasureId !== null) {
       const created = measures.find((m) => m.id === newMeasureId);
-      if (created && (created.isReference || !created.autoCalculated)) openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
-      else setStatus(`Berechnet: ${fmt(created.value)}${created.unit || " mm"}. Doppel-Tipp zum manuellen Ändern.`);
+      if (created && (created.isReference || !created.autoCalculated || currentAutoMeasureMode() === "suggestions")) {
+        openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
+      } else {
+        setStatus(`Automatisch berechnet: ${fmt(created.value)}${created.unit || " mm"}. Doppel-Tipp zum manuellen Ändern.`);
+      }
     }
   }
 
