@@ -381,43 +381,78 @@
     return left.slice(0, -1).concat(right);
   }
 
-  // Sucht nahe der Markierung nach der stärksten echten Bildkante.
-  // Der Marker gibt die ungefähre Richtung vor; er wird nicht selbst zur Maßlinie.
+  // Nutzt die Markierung als Suchkorridor, nicht als Ergebnislinie.
+  // Entlang des Strichs werden echte Bildgradienten senkrecht zur Markierung gesucht.
+  // Die Treffer werden anschließend zu einer neuen, an Bildkanten orientierten Linie angepasst.
   function snapMarkedSegmentToImageEdge(a, b) {
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
-    if (len < 2) return { a, b, strength: 0 };
-    const nx = -dy / len, ny = dx / len;
-    const image = baseCanvas.getContext("2d", { willReadFrequently: true });
+    if (len < 8) return { a, b, strength: 0, snapped: false };
+    const ux = dx / len, uy = dy / len;
+    const nx = -uy, ny = ux;
     const w = baseCanvas.width, h = baseCanvas.height;
-    const radius = Math.max(5, Math.min(18, canvas.width * 0.012));
-    const samples = Math.max(7, Math.min(45, Math.round(len / Math.max(8, canvas.width / 45))));
-    const offsets = [];
-    for (let off = -radius; off <= radius; off += 1.5) offsets.push(off);
-    const sampleAt = (x, y) => {
+    const pixels = baseCanvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    const lum = (x, y) => {
+      const q = (y * w + x) * 4;
+      return 0.299 * pixels[q] + 0.587 * pixels[q + 1] + 0.114 * pixels[q + 2];
+    };
+    const gradNormal = (x, y) => {
       const ix = Math.round(x), iy = Math.round(y);
-      if (ix < 1 || iy < 1 || ix >= w - 1 || iy >= h - 1) return 0;
-      const d = image.getImageData(ix - 1, iy - 1, 3, 3).data;
-      const lum = (idx) => 0.299*d[idx] + 0.587*d[idx+1] + 0.114*d[idx+2];
-      const gx = (lum(2)-lum(0)) + 2*(lum(5)-lum(3)) + (lum(8)-lum(6));
-      const gy = (lum(6)-lum(0)) + 2*(lum(7)-lum(1)) + (lum(8)-lum(2));
-      return Math.hypot(gx, gy);
+      if (ix < 2 || iy < 2 || ix >= w - 2 || iy >= h - 2) return 0;
+      // Gradient in Richtung senkrecht zum markierten Segment.
+      const gx = lum(ix + 1, iy - 1) - lum(ix - 1, iy - 1)
+        + 2 * (lum(ix + 1, iy) - lum(ix - 1, iy))
+        + lum(ix + 1, iy + 1) - lum(ix - 1, iy + 1);
+      const gy = lum(ix - 1, iy + 1) - lum(ix - 1, iy - 1)
+        + 2 * (lum(ix, iy + 1) - lum(ix, iy - 1))
+        + lum(ix + 1, iy + 1) - lum(ix + 1, iy - 1);
+      return Math.abs(gx * nx + gy * ny);
     };
-    // Sample all pixels once, rather than repeatedly reading the canvas.
-    const pixels = image.getImageData(0, 0, w, h).data;
-    const gradAt = (x, y) => {
-      const ix=Math.round(x), iy=Math.round(y);
-      if(ix<1||iy<1||ix>=w-1||iy>=h-1) return 0;
-      const lum=(xx,yy)=>{const q=(yy*w+xx)*4;return .299*pixels[q]+.587*pixels[q+1]+.114*pixels[q+2];};
-      const gx=lum(ix+1,iy-1)-lum(ix-1,iy-1)+2*(lum(ix+1,iy)-lum(ix-1,iy))+lum(ix+1,iy+1)-lum(ix-1,iy+1);
-      const gy=lum(ix-1,iy+1)-lum(ix-1,iy-1)+2*(lum(ix,iy+1)-lum(ix,iy-1))+lum(ix+1,iy+1)-lum(ix+1,iy-1);
-      return Math.abs(gx*nx + gy*ny);
+    const radius = Math.max(8, Math.min(36, Math.round(Math.min(w, h) * 0.018)));
+    const samples = Math.max(12, Math.min(100, Math.round(len / 5)));
+    const hits = [];
+    let previousOffset = null;
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const px = a.x + dx * t, py = a.y + dy * t;
+      let best = { score: 0, off: 0 };
+      for (let off = -radius; off <= radius; off += 2) {
+        const score = gradNormal(px + nx * off, py + ny * off);
+        // Kleine Kontinuitätspräferenz verhindert, dass die Suche zwischen Maserungskanten springt.
+        const continuityPenalty = previousOffset === null ? 0 : Math.abs(off - previousOffset) * 0.8;
+        const adjusted = score - continuityPenalty;
+        if (adjusted > best.score) best = { score: adjusted, raw: score, off };
+      }
+      if ((best.raw || 0) >= 18) {
+        hits.push({ x: px + nx * best.off, y: py + ny * best.off, t, off: best.off, strength: best.raw });
+        previousOffset = best.off;
+      }
+    }
+    // Bei zu wenigen oder zu schwachen Treffern die Markierung unverändert lassen und ehrlich kennzeichnen.
+    if (hits.length < Math.max(5, Math.round(samples * 0.22))) {
+      return { a, b, strength: hits.length ? hits.reduce((v, p) => v + p.strength, 0) / hits.length : 0, snapped: false };
+    }
+    // Robuste Gerade per Hauptachsenrichtung (PCA) aus den gefundenen Bildkantenpunkten.
+    const mx = hits.reduce((v, p) => v + p.x, 0) / hits.length;
+    const my = hits.reduce((v, p) => v + p.y, 0) / hits.length;
+    let xx = 0, yy = 0, xy = 0;
+    for (const p of hits) { const x = p.x - mx, y = p.y - my; xx += x*x; yy += y*y; xy += x*y; }
+    const theta = 0.5 * Math.atan2(2 * xy, xx - yy);
+    let vx = Math.cos(theta), vy = Math.sin(theta);
+    if (vx * ux + vy * uy < 0) { vx = -vx; vy = -vy; }
+    const projections = hits.map(p => (p.x - mx) * vx + (p.y - my) * vy);
+    const minT = Math.min(...projections), maxT = Math.max(...projections);
+    const coverage = (maxT - minT) / len;
+    // Nur übernehmen, wenn die erkannte Kante über einen sinnvollen Teil der Markierung verläuft.
+    if (coverage < 0.38) {
+      return { a, b, strength: hits.reduce((v, p) => v + p.strength, 0) / hits.length, snapped: false };
+    }
+    const strength = hits.reduce((v, p) => v + p.strength, 0) / hits.length;
+    return {
+      a: { x: mx + vx * minT, y: my + vy * minT },
+      b: { x: mx + vx * maxT, y: my + vy * maxT },
+      strength, snapped: true
     };
-    let bestOff=0,bestScore=-1;
-    for(const off of offsets){let score=0,count=0;for(let i=1;i<samples;i++){const t=i/samples;score+=gradAt(a.x+dx*t+nx*off,a.y+dy*t+ny*off);count++;}score/=Math.max(1,count);if(score>bestScore){bestScore=score;bestOff=off;}}
-    // Nicht einrasten, wenn die Bildkante kaum eindeutiger als die Markierung ist.
-    const shift = bestScore > 24 ? bestOff : 0;
-    return { a:{x:a.x+nx*shift,y:a.y+ny*shift}, b:{x:b.x+nx*shift,y:b.y+ny*shift}, strength:bestScore };
   }
 
   function suggestionsFromContourMarks() {
@@ -431,7 +466,7 @@
         const snapped = snapMarkedSegmentToImageEdge(a, b);
         const angle = Math.atan2(snapped.b.y - snapped.a.y, snapped.b.x - snapped.a.x) * 180 / Math.PI;
         const orientation = Math.abs(angle) < 20 || Math.abs(angle) > 160 ? "horizontal" : (Math.abs(angle) > 70 && Math.abs(angle) < 110 ? "vertical" : "diagonal");
-        candidates.push({ id: nextSuggestionId++, x1: snapped.a.x, y1: snapped.a.y, x2: snapped.b.x, y2: snapped.b.y, orientation, source: "marker", edgeStrength: snapped.strength });
+        candidates.push({ id: nextSuggestionId++, x1: snapped.a.x, y1: snapped.a.y, x2: snapped.b.x, y2: snapped.b.y, orientation, source: "marker", edgeStrength: snapped.strength, snapped: snapped.snapped });
       }
     });
     return candidates;
@@ -744,7 +779,7 @@
       const title = document.createElement("strong");
       title.textContent = `Vorschlag ${i + 1} · ${s.orientation === "horizontal" ? "waagerecht" : (s.orientation === "vertical" ? "senkrecht" : "schräg")}`;
       const detail = document.createElement("small");
-      detail.textContent = `ca. ${Math.round(Math.hypot(s.x2 - s.x1, s.y2 - s.y1))} Bildpixel${s.source === "marker" ? " · aus Konturmarkierung" : ""} · tippen zum Hervorheben`;
+      detail.textContent = `ca. ${Math.round(Math.hypot(s.x2 - s.x1, s.y2 - s.y1))} Bildpixel${s.source === "marker" ? (s.snapped ? " · an Bildkante angepasst" : " · Markierung, keine eindeutige Bildkante gefunden") : ""} · tippen zum Hervorheben`;
       info.append(title, detail);
       const accept = document.createElement("button");
       accept.type = "button";
