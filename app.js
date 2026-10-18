@@ -457,16 +457,46 @@
 
   function suggestionsFromContourMarks() {
     const candidates = [];
+    // Marker is a search guide only. Never return an unsnapped marker as a detected edge.
+    const minSegmentLength = Math.max(48, canvas.width / 22);
+    const simplifyTolerance = Math.max(9, canvas.width / 90);
     contourMarks.forEach((mark) => {
-      const pts = simplifyContour(mark.points, Math.max(5, canvas.width / 180));
+      const pts = simplifyContour(mark.points, simplifyTolerance);
+      const snappedParts = [];
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1], b = pts[i];
-        const len = Math.hypot(b.x - a.x, b.y - a.y);
-        if (len < Math.max(24, canvas.width / 35)) continue;
-        const snapped = snapMarkedSegmentToImageEdge(a, b);
-        const angle = Math.atan2(snapped.b.y - snapped.a.y, snapped.b.x - snapped.a.x) * 180 / Math.PI;
-        const orientation = Math.abs(angle) < 20 || Math.abs(angle) > 160 ? "horizontal" : (Math.abs(angle) > 70 && Math.abs(angle) < 110 ? "vertical" : "diagonal");
-        candidates.push({ id: nextSuggestionId++, x1: snapped.a.x, y1: snapped.a.y, x2: snapped.b.x, y2: snapped.b.y, orientation, source: "marker", edgeStrength: snapped.strength, snapped: snapped.snapped });
+        const len = Math.hypot(b.x-a.x, b.y-a.y);
+        if (len < minSegmentLength) continue;
+        const snapped = snapMarkedSegmentToImageEdge(a,b);
+        if (!snapped.snapped || snapped.strength < 22) continue;
+        const dx=snapped.b.x-snapped.a.x, dy=snapped.b.y-snapped.a.y;
+        snappedParts.push({a:snapped.a,b:snapped.b,angle:Math.atan2(dy,dx),strength:snapped.strength});
+      }
+      // Merge adjacent near-collinear segments to avoid dozens of suggestions from one stroke.
+      const groups=[];
+      for (const part of snappedParts) {
+        const last=groups[groups.length-1];
+        if (last) {
+          const angleDiff=Math.abs(Math.atan2(Math.sin(part.angle-last.angle),Math.cos(part.angle-last.angle)));
+          const gap=Math.hypot(part.a.x-last.b.x,part.a.y-last.b.y);
+          if (angleDiff<18*Math.PI/180 && gap<Math.max(32,canvas.width/35)) {
+            last.parts.push(part); last.b=part.b; last.strength=(last.strength+part.strength)/2; continue;
+          }
+        }
+        groups.push({a:part.a,b:part.b,angle:part.angle,strength:part.strength,parts:[part]});
+      }
+      for (const group of groups) {
+        const points=group.parts.flatMap(p=>[p.a,p.b]); if(points.length<2) continue;
+        const mx=points.reduce((s,p)=>s+p.x,0)/points.length, my=points.reduce((s,p)=>s+p.y,0)/points.length;
+        let xx=0,yy=0,xy=0;
+        for(const p of points){const x=p.x-mx,y=p.y-my;xx+=x*x;yy+=y*y;xy+=x*y;}
+        const theta=0.5*Math.atan2(2*xy,xx-yy), vx=Math.cos(theta),vy=Math.sin(theta);
+        const proj=points.map(p=>(p.x-mx)*vx+(p.y-my)*vy), minT=Math.min(...proj),maxT=Math.max(...proj);
+        if(maxT-minT<minSegmentLength) continue;
+        const x1=mx+vx*minT,y1=my+vy*minT,x2=mx+vx*maxT,y2=my+vy*maxT;
+        const angle=Math.atan2(y2-y1,x2-x1)*180/Math.PI;
+        const orientation=Math.abs(angle)<20||Math.abs(angle)>160?'horizontal':(Math.abs(angle)>70&&Math.abs(angle)<110?'vertical':'diagonal');
+        candidates.push({id:nextSuggestionId++,x1,y1,x2,y2,orientation,source:'marker',edgeStrength:group.strength,snapped:true});
       }
     });
     return candidates;
@@ -779,7 +809,7 @@
       const title = document.createElement("strong");
       title.textContent = `Vorschlag ${i + 1} · ${s.orientation === "horizontal" ? "waagerecht" : (s.orientation === "vertical" ? "senkrecht" : "schräg")}`;
       const detail = document.createElement("small");
-      detail.textContent = `ca. ${Math.round(Math.hypot(s.x2 - s.x1, s.y2 - s.y1))} Bildpixel${s.source === "marker" ? (s.snapped ? " · an Bildkante angepasst" : " · Markierung, keine eindeutige Bildkante gefunden") : ""} · tippen zum Hervorheben`;
+      detail.textContent = `ca. ${Math.round(Math.hypot(s.x2 - s.x1, s.y2 - s.y1))} Bildpixel${s.source === "marker" ? (s.snapped ? " · Bildkante erkannt" : " · keine eindeutige Bildkante") : ""} · tippen zum Hervorheben`;
       info.append(title, detail);
       const accept = document.createElement("button");
       accept.type = "button";
