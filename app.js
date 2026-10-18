@@ -336,7 +336,7 @@
   function drawMeasureSuggestions(g, k) {
     g.save();
     measureSuggestions.forEach((s, index) => {
-      g.strokeStyle = s.orientation === "horizontal" ? "#00b8d9" : "#b35cff";
+      g.strokeStyle = s.orientation === "horizontal" ? "#00b8d9" : (s.orientation === "vertical" ? "#b35cff" : "#ff9f1c");
       g.fillStyle = g.strokeStyle;
       g.lineWidth = Math.max(2*k, scr(2));
       g.setLineDash([7*k, 5*k]);
@@ -352,50 +352,158 @@
     g.restore();
   }
 
+  // Robustere lokale Kantenerkennung:
+  // 1) Bild für die Analyse verkleinern, damit sie auch auf dem Smartphone flott bleibt.
+  // 2) Sobel-Gradienten erfassen auch schwächere und schräge Kanten.
+  // 3) Ein richtungsbasierter Hough-Ansatz sammelt Kantenpunkte zu Linien.
+  // 4) Unterbrechungen werden beim Bilden der Liniensegmente toleriert.
+  // Die Ergebnisse bleiben Vorschläge; sie werden nie automatisch zu Maßlinien.
   function detectImageEdgeSuggestions() {
     if (!photoLoaded) return [];
-    const w=baseCanvas.width, h=baseCanvas.height;
-    const image=baseCanvas.getContext("2d", {willReadFrequently:true}).getImageData(0,0,w,h);
-    const px=image.data;
-    const lum=(x,y)=>{ const i=(y*w+x)*4; return 0.299*px[i]+0.587*px[i+1]+0.114*px[i+2]; };
-    const step=3, threshold=24;
-    const found=[];
-    function scanHorizontal(y) {
-      let start=-1, score=0, count=0;
-      for(let x=2;x<w-2;x+=step) {
-        const strength=Math.abs(lum(x,y-1)-lum(x,y+1));
-        if(strength>=threshold) { if(start<0) {start=x;score=0;count=0;} score+=strength;count++; }
-        else if(start>=0) { if(x-start>=Math.max(65,w*0.10)&&count>=8) found.push({orientation:"horizontal",x1:start,y1:y,x2:Math.min(w-1,x-step),y2:y,score:score/count*count}); start=-1; }
+    const sourceW=baseCanvas.width, sourceH=baseCanvas.height;
+    const maxAnalysisSide=850;
+    const scale=Math.min(1,maxAnalysisSide/Math.max(sourceW,sourceH));
+    const aw=Math.max(3,Math.round(sourceW*scale));
+    const ah=Math.max(3,Math.round(sourceH*scale));
+    const analysisCanvas=document.createElement('canvas');
+    analysisCanvas.width=aw; analysisCanvas.height=ah;
+    const ag=analysisCanvas.getContext('2d',{willReadFrequently:true});
+    ag.drawImage(baseCanvas,0,0,aw,ah);
+    const data=ag.getImageData(0,0,aw,ah).data;
+    const size=aw*ah;
+    const gray=new Float32Array(size);
+    for(let i=0,j=0;i<size;i++,j+=4) gray[i]=0.299*data[j]+0.587*data[j+1]+0.114*data[j+2];
+
+    const magnitude=new Float32Array(size);
+    const angle=new Float32Array(size);
+    const histogram=new Uint32Array(256);
+    let eligible=0;
+    for(let y=1;y<ah-1;y++) {
+      const row=y*aw;
+      for(let x=1;x<aw-1;x++) {
+        const i=row+x;
+        const gx=-gray[i-aw-1]+gray[i-aw+1]-2*gray[i-1]+2*gray[i+1]-gray[i+aw-1]+gray[i+aw+1];
+        const gy=-gray[i-aw-1]-2*gray[i-aw]-gray[i-aw+1]+gray[i+aw-1]+2*gray[i+aw]+gray[i+aw+1];
+        const mag=Math.hypot(gx,gy);
+        magnitude[i]=mag;
+        if(mag>=12) { histogram[Math.min(255,Math.floor(mag/6))]++; eligible++; }
+        let a=Math.atan2(gy,gx);
+        if(a<0) a+=Math.PI;
+        if(a>=Math.PI) a-=Math.PI;
+        angle[i]=a;
       }
-      if(start>=0&&w-2-start>=Math.max(65,w*0.10)&&count>=8) found.push({orientation:"horizontal",x1:start,y1:y,x2:w-2,y2:y,score:score/count*count});
     }
-    function scanVertical(x) {
-      let start=-1, score=0, count=0;
-      for(let y=2;y<h-2;y+=step) {
-        const strength=Math.abs(lum(x-1,y)-lum(x+1,y));
-        if(strength>=threshold) { if(start<0) {start=y;score=0;count=0;} score+=strength;count++; }
-        else if(start>=0) { if(y-start>=Math.max(65,h*0.10)&&count>=8) found.push({orientation:"vertical",x1:x,y1:start,x2:x,y2:Math.min(h-1,y-step),score:score/count*count}); start=-1; }
+    if(eligible<30) return [];
+    // Adaptiver Schwellenwert: bei kontrastreichen/texturierten Bildern steigt er,
+    // schwache Kanten werden aber nicht durch einen starren hohen Grenzwert verworfen.
+    const target=Math.floor(eligible*0.55);
+    let cumulative=0, quantile=4;
+    for(let b=2;b<histogram.length;b++) { cumulative+=histogram[b]; if(cumulative>=target) {quantile=b;break;} }
+    const threshold=Math.max(18,Math.min(62,quantile*6*0.72));
+
+    const edgeX=new Int16Array(size), edgeY=new Int16Array(size);
+    const edgeMag=new Float32Array(size), edgeAngle=new Float32Array(size);
+    let edgeCount=0;
+    for(let y=2;y<ah-2;y++) {
+      const row=y*aw;
+      for(let x=2;x<aw-2;x++) {
+        const i=row+x, mag=magnitude[i];
+        if(mag<threshold) continue;
+        // Einfache Nichtmaximum-Unterdrückung entlang der Gradientenrichtung:
+        // hält Kanten schmal und reduziert doppelte Treffer auf breiten Übergängen.
+        const a=angle[i], dx=Math.cos(a), dy=Math.sin(a);
+        const xStep=Math.round(dx), yStep=Math.round(dy);
+        if(mag<magnitude[(y-yStep)*aw+(x-xStep)] || mag<magnitude[(y+yStep)*aw+(x+xStep)]) continue;
+        edgeX[edgeCount]=x; edgeY[edgeCount]=y; edgeMag[edgeCount]=mag; edgeAngle[edgeCount]=a; edgeCount++;
       }
-      if(start>=0&&h-2-start>=Math.max(65,h*0.10)&&count>=8) found.push({orientation:"vertical",x1:x,y1:start,x2:x,y2:h-2,score:score/count*count});
     }
-    for(let y=3;y<h-3;y+=3) scanHorizontal(y);
-    for(let x=3;x<w-3;x+=3) scanVertical(x);
-    found.sort((a,b)=>b.score-a.score);
+    if(edgeCount<20) return [];
+
+    const thetaBins=36; // 5-Grad-Schritte, daher auch schräge Kanten
+    const diagonal=Math.ceil(Math.hypot(aw,ah));
+    const rhoCount=diagonal*2+1;
+    const accumulator=new Uint32Array(thetaBins*rhoCount);
+    const cosT=new Float32Array(thetaBins), sinT=new Float32Array(thetaBins);
+    for(let t=0;t<thetaBins;t++) { const a=t*Math.PI/thetaBins; cosT[t]=Math.cos(a); sinT[t]=Math.sin(a); }
+    for(let i=0;i<edgeCount;i++) {
+      let t=Math.round(edgeAngle[i]*thetaBins/Math.PI)%thetaBins;
+      const rho=Math.round(edgeX[i]*cosT[t]+edgeY[i]*sinT[t])+diagonal;
+      if(rho>=0&&rho<rhoCount) accumulator[t*rhoCount+rho]++;
+    }
+    const minVotes=Math.max(14,Math.round(Math.min(aw,ah)*0.025));
+    const peaks=[];
+    for(let t=0;t<thetaBins;t++) {
+      const off=t*rhoCount;
+      for(let r=2;r<rhoCount-2;r++) {
+        const votes=accumulator[off+r];
+        if(votes<minVotes) continue;
+        let isMax=true;
+        for(let dr=-2;dr<=2&&isMax;dr++) if(dr!==0&&accumulator[off+r+dr]>votes) isMax=false;
+        if(isMax) peaks.push({t,rho:r-diagonal,votes});
+      }
+    }
+    peaks.sort((a,b)=>b.votes-a.votes);
+    const candidates=[];
+    const maxPeaks=Math.min(70,peaks.length);
+    const minSegmentLength=Math.max(28,Math.min(aw,ah)*0.045);
+    for(let pi=0;pi<maxPeaks;pi++) {
+      const peak=peaks[pi], theta=peak.t*Math.PI/thetaBins;
+      const ct=cosT[peak.t], st=sinT[peak.t], points=[];
+      for(let i=0;i<edgeCount;i++) {
+        let da=Math.abs(edgeAngle[i]-theta); da=Math.min(da,Math.PI-da);
+        if(da>Math.PI*12/180) continue;
+        const distance=Math.abs(edgeX[i]*ct+edgeY[i]*st-peak.rho);
+        if(distance>2.0) continue;
+        points.push({t:-edgeX[i]*st+edgeY[i]*ct,x:edgeX[i],y:edgeY[i],mag:edgeMag[i]});
+      }
+      if(points.length<minVotes) continue;
+      points.sort((a,b)=>a.t-b.t);
+      let group=[], groupStart=null;
+      const flush=()=>{
+        if(group.length<minVotes) {group=[];groupStart=null;return;}
+        const first=group[0], last=group[group.length-1], length=last.t-first.t;
+        if(length>=minSegmentLength && group.length/Math.max(1,length)>=0.07) {
+          const x1=peak.rho*ct+first.t*(-st), y1=peak.rho*st+first.t*ct;
+          const x2=peak.rho*ct+last.t*(-st), y2=peak.rho*st+last.t*ct;
+          const mx=(x1+x2)/2, my=(y1+y2)/2;
+          const lineAngle=(Math.atan2(y2-y1,x2-x1)+Math.PI*2)%Math.PI;
+          const deg=lineAngle*180/Math.PI;
+          const orientation=(deg<12||deg>168)?'horizontal':(Math.abs(deg-90)<12?'vertical':'diagonal');
+          const avgMag=group.reduce((sum,q)=>sum+q.mag,0)/group.length;
+          candidates.push({orientation,x1:x1*(sourceW/aw),y1:y1*(sourceH/ah),x2:x2*(sourceW/aw),y2:y2*(sourceH/ah),score:length*Math.min(2,group.length/Math.max(1,length))*avgMag/50,angle:lineAngle,mx,my});
+        }
+        group=[];groupStart=null;
+      };
+      for(const q of points) {
+        if(group.length && q.t-group[group.length-1].t>5) flush();
+        if(!group.length) groupStart=q.t;
+        group.push(q);
+      }
+      flush();
+    }
+    candidates.sort((a,b)=>b.score-a.score);
     const chosen=[];
-    for(const c of found) {
-      const same=chosen.some(o=>o.orientation===c.orientation && Math.abs((c.orientation==="horizontal"?o.y1:o.x1)-(c.orientation==="horizontal"?c.y1:c.x1))<Math.max(10,Math.min(w,h)*0.012) && overlapRatio(o,c)>0.45);
-      if(!same) chosen.push(c);
+    for(const c of candidates) {
+      const cdx=c.x2-c.x1, cdy=c.y2-c.y1, clen=Math.max(1,Math.hypot(cdx,cdy));
+      const similar=chosen.some(o=>{
+        const odx=o.x2-o.x1, ody=o.y2-o.y1, olen=Math.max(1,Math.hypot(odx,ody));
+        const a1=Math.atan2(cdy,cdx), a2=Math.atan2(ody,odx);
+        let da=Math.abs(a1-a2)%Math.PI; da=Math.min(da,Math.PI-da);
+        if(da>8*Math.PI/180) return false;
+        const cmx=(c.x1+c.x2)/2, cmy=(c.y1+c.y2)/2, omx=(o.x1+o.x2)/2, omy=(o.y1+o.y2)/2;
+        const normalDistance=Math.abs((cmx-omx)*(-ody/olen)+(cmy-omy)*(odx/olen));
+        if(normalDistance>Math.max(5,Math.min(sourceW,sourceH)*0.012)) return false;
+        const ux=odx/olen, uy=ody/olen;
+        const ca=c.x1*ux+c.y1*uy, cb=c.x2*ux+c.y2*uy, oa=o.x1*ux+o.y1*uy, ob=o.x2*ux+o.y2*uy;
+        const overlap=Math.max(0,Math.min(Math.max(ca,cb),Math.max(oa,ob))-Math.max(Math.min(ca,cb),Math.min(oa,ob)));
+        return overlap/Math.max(1,Math.min(clen,olen))>0.48;
+      });
+      if(!similar) chosen.push(c);
       if(chosen.length>=14) break;
     }
-    return chosen.map(c=>({...c,id:nextSuggestionId++}));
+    return chosen.map(c=>({orientation:c.orientation,x1:Math.max(0,Math.min(sourceW-1,c.x1)),y1:Math.max(0,Math.min(sourceH-1,c.y1)),x2:Math.max(0,Math.min(sourceW-1,c.x2)),y2:Math.max(0,Math.min(sourceH-1,c.y2)),score:c.score,id:nextSuggestionId++}));
   }
-  function overlapRatio(a,b) {
-    const horizontal=a.orientation==="horizontal";
-    const a1=horizontal?a.x1:a.y1, a2=horizontal?a.x2:a.y2;
-    const b1=horizontal?b.x1:b.y1, b2=horizontal?b.x2:b.y2;
-    const overlap=Math.max(0,Math.min(a2,b2)-Math.max(a1,b1));
-    return overlap/Math.max(1,Math.min(a2-a1,b2-b1));
-  }
+
   function renderMeasureSuggestionsList() {
     const list=$("measureSuggestionsList"), count=$("suggestionCount");
     if(!list) return;
@@ -407,7 +515,7 @@
     measureSuggestions.forEach((s,i)=>{
       const row=document.createElement("div"); row.className="suggestion-item";
       const info=document.createElement("div"); info.className="suggestion-info";
-      const title=document.createElement("strong"); title.textContent=`Vorschlag ${i+1} · ${s.orientation==="horizontal"?"waagerecht":"senkrecht"}`;
+      const title=document.createElement("strong"); title.textContent=`Vorschlag ${i+1} · ${s.orientation==="horizontal"?"waagerecht":(s.orientation==="vertical"?"senkrecht":"schräg")}`;
       const detail=document.createElement("small"); detail.textContent=`ca. ${Math.round(Math.hypot(s.x2-s.x1,s.y2-s.y1))} Bildpixel · bitte im Foto prüfen`;
       info.append(title,detail);
       const accept=document.createElement("button"); accept.type="button"; accept.className="suggestion-accept"; accept.textContent="Übernehmen";
