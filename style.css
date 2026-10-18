@@ -508,3 +508,41 @@ button.secondary{background:#f5f8fa}
 .dialog-box{border:1px solid rgba(220,229,235,.85);border-radius:16px}
 @media(max-width:420px){main{padding:7px;gap:8px}.panel{padding:9px;border-radius:12px}.topbar{gap:6px}#styleToggle{font-size:.78rem;padding:5px 8px}.tool{font-size:.8rem;min-height:44px}.summary-hint{max-width:52%}.action-row{flex-wrap:wrap}.action-row button{min-width:calc(50% - 4px)}.settings-row{gap:9px 12px}}
 @media(min-width:650px){main{padding:14px;gap:12px}.editor-panel{padding:14px}.secondary-tools{grid-template-columns:repeat(6,minmax(0,1fr))}}
+
+
+/* FotoMaß 2D-Skizze – Erweiterungen */
+.sketch-mode-row { margin-top: 8px; }
+#sketchModeHint { margin: 6px 0 0; }
+.dimension-tools { margin-top: 10px; }
+.dimension-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 0 4px;
+  align-items: end;
+}
+.dimension-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: .86rem;
+  color: var(--muted, #667085);
+}
+.dimension-form input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface, #fff);
+  color: var(--text, #17212b);
+  font: inherit;
+}
+.dimension-form button { grid-column: 1 / -1; }
+@media (min-width: 640px) {
+  .dimension-form { grid-template-columns: 1fr 1fr auto; }
+  .dimension-form button { grid-column: auto; }
+}
+body.sketch-mode #canvasWrap { background-color: #f7f9fc; }
+body.sketch-mode #editorCanvas { background: #fff; box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }

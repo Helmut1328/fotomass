@@ -12,7 +12,7 @@
   const DB_VERSION = 2;
   const STORE_P = "projects";
   const STORE_PH = "photos";
-  const FORMAT_VERSION = 10;          // Projektformat (siehe parseProject / migrate)
+  const FORMAT_VERSION = 11;          // Projektformat (siehe parseProject / migrate)
   const TRASH_DAYS = 30;
   const UNITS = [" mm", " cm", " m", "°"];
 
@@ -206,6 +206,8 @@
       created: typeof raw.created === "string" ? raw.created : (typeof raw.savedAt === "string" ? raw.savedAt : new Date().toISOString()),
       savedAt: typeof raw.savedAt === "string" ? raw.savedAt : new Date().toISOString(),
       photoData: raw.photoData,
+      canvasMode: raw.canvasMode === "sketch" ? "sketch" : "photo",
+      sketchScalePxPerMm: isNum(raw.sketchScalePxPerMm) && raw.sketchScalePxPerMm > 0 ? Math.min(raw.sketchScalePxPerMm, 100) : 1,
       measures, drawings,
       nextId: Math.max(isNum(raw.nextId) ? raw.nextId : 1, maxId + 1),
       unit: unitOr(raw.unit),

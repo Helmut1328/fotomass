@@ -1,18 +1,16 @@
-FotoMaß – Wiederherstellung ohne automatische Maßlinienvorschläge
+FotoMaß – Wiederherstellung / Basisversion
 
-Dieses Paket basiert auf den ursprünglichen FotoMaß-Dateien, die vor den Modus-C-/Konturmarker-Erweiterungen hochgeladen wurden.
-
-Entfernt:
-- Modus C und automatische Maßlinienvorschläge
-- Konturmarker und Vorschläge aus Markierungen
-- zugehörige Erweiterungen der Bedienoberfläche
+Dieses Paket baut auf der hochgeladenen FotoMaß-Version „ohne Automatik“ auf und enthält das Design C sowie die ergänzende 2D-Skizzenfunktion.
 
 Beibehalten:
-- bestehende Maßlinien- und Referenzmaßfunktionen
-- vorhandene Zeichenwerkzeuge
-- Bildbearbeitung, Speicherung und Export wie in der Ausgangsversion
+- vorhandene Foto-, Maßlinien-, Referenzmaß- und Zeichenfunktionen
+- Bild einfügen/zuschneiden, Speichern, Projektverwaltung und Export
 - PWA-Dateien und lokale Speicherung
 
-Der Service-Worker-Cache wurde auf fotomass-v26 geändert, damit nach Veröffentlichung nicht absichtlich die alte Cache-Version weiterverwendet wird.
+Neu in dieser Version:
+- Design-C-Oberfläche
+- unabhängige 2D-Skizzenfläche und Wechsel zwischen Foto-/Skizzenansicht
+- maßbasierte Rechtecke mit Breiten- und Höhenmaß
+- Projektformat 11 und aktualisierter Offline-Cache
 
-Vor dem Hochladen die aktuell veröffentlichte Version sichern. ZIP entpacken und Dateien mit ihren enthaltenen Originalnamen im Repository ersetzen.
+Vor dem Hochladen den aktuellen Repository-Stand sichern. ZIP entpacken und die enthaltenen Dateien mit ihren Originalnamen im bestehenden Repository ersetzen.

@@ -54,6 +54,8 @@
   const MAX_SIDE = 2000;        // längste Bildseite im Editor
   const CROSSHAIR_OFFSET_Y = -52;
   let photoLoaded = false;
+  let canvasMode = "photo"; // photo | sketch
+  let sketchScalePxPerMm = 1;
   let photoData = null;         // verkleinertes JPEG (Data-URL) -> wird im Projekt gespeichert
   let originalBlob = null;      // unverändertes Originalfoto (wird zusätzlich getrennt in IndexedDB abgelegt)
   let projectId = null;         // Projekt-ID (Schlüssel in der Datenbank – nie der Name)
@@ -261,6 +263,32 @@
     canvas.style.display = "block";
     hideEmptyState();
     fitToView();
+  }
+
+  function setSketchBackground() {
+    const g = baseCanvas.getContext("2d");
+    g.save(); g.fillStyle = "#ffffff"; g.fillRect(0, 0, baseCanvas.width, baseCanvas.height); g.restore();
+    canvasMode = "sketch";
+    document.body.classList.add("sketch-mode");
+    $("toggleSketchView").textContent = "▧ Fotoansicht";
+    $("toggleSketchView").disabled = false;
+    $("sketchModeHint").textContent = "2D-Skizzenansicht: weißer Zeichenbereich. Die Fotoansicht bleibt im Projekt erhalten.";
+    draw();
+  }
+
+  function setPhotoBackground() {
+    const img = new Image();
+    img.onload = () => {
+      setBaseFromImage(img);
+      canvasMode = "photo";
+      document.body.classList.remove("sketch-mode");
+      $("toggleSketchView").textContent = "✎ Skizzenansicht";
+      $("toggleSketchView").disabled = false;
+      $("sketchModeHint").textContent = "Fotoansicht: Maße und Zeichnungen liegen über dem Foto. Wechsel jederzeit zur weißen 2D-Skizzenfläche.";
+      draw(); scheduleAutosave();
+    };
+    img.onerror = () => toast("Fotoansicht konnte nicht geladen werden.");
+    img.src = photoData;
   }
 
   function paint(g, forExport) {
@@ -731,6 +759,54 @@
     recalculateAutomaticMeasures();
   }
 
+  // ---------- 2D-Skizzenmodus ----------
+  $("newSketch").addEventListener("click", async () => {
+    if (!(await leaveCurrentProject())) return;
+    resetState();
+    projectId = storage.newId(); projectCreated = new Date().toISOString(); originalBlob = null;
+    $("projectName").value = "2D-Skizze " + new Date().toLocaleDateString("de-DE");
+    const blank = document.createElement("canvas"); blank.width = 1200; blank.height = 800;
+    const bg = blank.getContext("2d"); bg.fillStyle = "#ffffff"; bg.fillRect(0, 0, blank.width, blank.height);
+    photoData = blank.toDataURL("image/png");
+    const img = new Image();
+    img.onload = () => {
+      setBaseFromImage(img); canvasMode = "sketch"; sketchScalePxPerMm = 1;
+      setSketchBackground(); $("photoStatus").textContent = "Leere 2D-Skizze";
+      $("toggleSketchView").disabled = false; renderMeasureList(); setReady(true); refresh();
+      setStatus("Neue 2D-Skizze angelegt. Du kannst frei zeichnen oder ein maßbasiertes Rechteck erzeugen.");
+      flushAutosave();
+    };
+    img.onerror = () => setStatus("Skizzenfläche konnte nicht erstellt werden.");
+    img.src = photoData;
+  });
+
+  $("toggleSketchView").addEventListener("click", () => {
+    if (!photoLoaded || !photoData) return;
+    if (canvasMode === "sketch") setPhotoBackground();
+    else { setSketchBackground(); scheduleAutosave(); }
+  });
+
+  $("addDimensionRect").addEventListener("click", () => {
+    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe anschließend erneut auf „Rechteck erzeugen“."); return; }
+    const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
+    if (!(wMm > 0 && hMm > 0 && Number.isFinite(wMm) && Number.isFinite(hMm))) { alert("Bitte Breite und Höhe größer als 0 mm eingeben."); return; }
+    if (canvasMode !== "sketch") setSketchBackground();
+    const marginX = canvas.width * 0.12, marginY = canvas.height * 0.14;
+    const pxPerMm = Math.min((canvas.width - marginX * 2) / wMm, (canvas.height - marginY * 2) / hMm);
+    if (!(pxPerMm > 0) || !Number.isFinite(pxPerMm)) { alert("Diese Maße passen nicht auf die Zeichenfläche."); return; }
+    const rw = wMm * pxPerMm, rh = hMm * pxPerMm;
+    const x1 = (canvas.width - rw) / 2, y1 = (canvas.height - rh) / 2;
+    const x2 = x1 + rw, y2 = y1 + rh;
+    remember();
+    const id = nextId++;
+    drawings.push({ id, type: "rect", x1, y1, x2, y2, color: colorInput.value || "#ff3b30", width: Number(widthInput.value) || 4, fill: false, fillOpacity: 1, rotation: 0 });
+    const offset = Math.max(28, Math.min(canvas.width, canvas.height) * 0.045);
+    measures.push({ id: nextId++, x1, y1: y2 + offset, x2, y2: y2 + offset, type: "linear", value: String(Math.round(wMm * 100) / 100), unit: " mm", color: colorInput.value || "#ff3b30", textBg: true, locked: false, labelLocked: false, labelOffsetX: 0, labelOffsetY: 0 });
+    measures.push({ id: nextId++, x1: x1 - offset, y1, x2: x1 - offset, y2, type: "linear", value: String(Math.round(hMm * 100) / 100), unit: " mm", color: colorInput.value || "#ff3b30", textBg: true, locked: false, labelLocked: false, labelOffsetX: 0, labelOffsetY: 0 });
+    sketchScalePxPerMm = pxPerMm; selectedDrawingId = id; selectedId = null;
+    refresh(); setStatus(`Rechteck erstellt: ${wMm} × ${hMm} mm. Maße sind als Zeichnungswerte gespeichert.`);
+  });
+
   // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
     measures = []; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
@@ -756,7 +832,7 @@
     return {
       version: storage.FORMAT_VERSION, app: "FotoMaß",
       id: projectId, projectName: $("projectName").value, created: projectCreated, savedAt: new Date().toISOString(),
-      photoData, measures, drawings, nextId,
+      photoData, canvasMode, sketchScalePxPerMm, measures, drawings, nextId,
       unit: unitSelect.value, snap: snapToggle.checked, fontSize: getFontSize(),
       thumb: withThumb ? makeThumb() : undefined, deletedAt: null
     };
@@ -822,6 +898,9 @@
         // Alte Projekte enthielten das volle Foto -> auf Editorgröße verkleinern
         const sameSize = (img.naturalWidth || img.width) === canvas.width;
         photoData = sameSize ? p.photoData : baseCanvas.toDataURL("image/jpeg", 0.9);
+        canvasMode = p.canvasMode === "sketch" ? "sketch" : "photo";
+        sketchScalePxPerMm = Number(p.sketchScalePxPerMm) > 0 ? Number(p.sketchScalePxPerMm) : 1;
+        if (canvasMode === "sketch") setSketchBackground(); else { document.body.classList.remove("sketch-mode"); $("toggleSketchView").textContent = "✎ Skizzenansicht"; $("toggleSketchView").disabled = false; }
         projectId = p.id; projectCreated = p.created;
         originalBlob = original || null;
         measures = p.measures; drawings = p.drawings; nextId = p.nextId;
@@ -855,7 +934,8 @@
 
   // Editor leeren (z. B. wenn das geöffnete Projekt in den Papierkorb kommt)
   function closeProject() {
-    photoLoaded = false; projectId = null; photoData = null; originalBlob = null;
+    photoLoaded = false; canvasMode = "photo"; sketchScalePxPerMm = 1; projectId = null; photoData = null; originalBlob = null;
+    document.body.classList.remove("sketch-mode"); $("toggleSketchView").disabled = true;
     resetState();
     canvas.style.display = "none";
     emptyState.hidden = false; emptyState.classList.remove("is-hidden"); emptyState.style.display = "";
@@ -876,6 +956,8 @@
       URL.revokeObjectURL(url);
       if (!(await leaveCurrentProject())) return;
       resetState();
+      canvasMode = "photo"; sketchScalePxPerMm = 1; document.body.classList.remove("sketch-mode");
+      $("toggleSketchView").textContent = "✎ Skizzenansicht"; $("toggleSketchView").disabled = false;
       projectId = storage.newId();
       projectCreated = new Date().toISOString();
       $("projectName").value = "";
@@ -1106,17 +1188,33 @@
       if (reduced) original = await (await fetch(photoData)).blob();
       const otype = original.type || "image/jpeg";
       $("capOriginal").textContent = reduced ? "Foto (verkleinert – Originaldatei fehlt)" : "Original";
-      exportFiles = [
-        new File([original], `${base}_${reduced ? "Foto-verkleinert" : "Original"}.${extFor(otype)}`, { type: otype }),
-        new File([annotated], `${base}_Masse.png`, { type: "image/png" })
-      ];
+      if (canvasMode === "sketch") {
+        exportFiles = [new File([annotated], `${base}_2D-Skizze.png`, { type: "image/png" })];
+        $("saveDialogTitle").textContent = "2D-Skizze exportieren";
+        $("previewOriginalFigure").hidden = true;
+        $("prevAnnotated").alt = "2D-Skizze";
+        $("capAnnotated").textContent = "2D-Skizze";
+        $("saveShare").textContent = "📲 Skizze sichern / teilen";
+      } else {
+        exportFiles = [
+          new File([original], `${base}_${reduced ? "Foto-verkleinert" : "Original"}.${extFor(otype)}`, { type: otype }),
+          new File([annotated], `${base}_Masse.png`, { type: "image/png" })
+        ];
+        $("saveDialogTitle").textContent = "Zwei Fotos sichern";
+        $("previewOriginalFigure").hidden = false;
+        $("prevOriginal").src = exportUrls[0] || "";
+        $("capOriginal").textContent = reduced ? "Foto (verkleinert)" : "Original";
+        $("prevAnnotated").alt = "Foto mit Maßen";
+        $("capAnnotated").textContent = "Mit Maßen";
+        $("saveShare").textContent = "📲 Beide in Fotos sichern";
+      }
       clearExportUrls();
       exportUrls = exportFiles.map((f) => URL.createObjectURL(f));
-      $("prevOriginal").src = exportUrls[0];
-      $("prevAnnotated").src = exportUrls[1];
+      if (canvasMode === "sketch") $("prevAnnotated").src = exportUrls[0];
+      else { $("prevOriginal").src = exportUrls[0]; $("prevAnnotated").src = exportUrls[1]; }
       $("saveDialogHint").textContent = storage.canShareFiles(exportFiles)
-        ? "Tippen, dann im Menü „2 Bilder sichern“ wählen. Alternativ ein Bild lange drücken › „Zu Fotos hinzufügen“."
-        : "Teilen wird hier nicht unterstützt: Bild lange drücken › „Zu Fotos hinzufügen“ oder „Als Dateien laden“.";
+        ? (exportFiles.length === 1 ? "Tippen und im Teilen-Menü sichern oder versenden." : "Tippen, dann im Menü „2 Bilder sichern“ wählen. Alternativ ein Bild lange drücken › „Zu Fotos hinzufügen“.")
+        : "Teilen wird hier nicht unterstützt: Bild lange drücken oder „Als Dateien laden“.";
       showDialog(saveDialog);
       setStatus("");
     } catch (_) {
@@ -1137,9 +1235,9 @@
   $("saveDownload").addEventListener("click", () => {
     if (!exportFiles) return;
     exportFiles.forEach((f, i) => setTimeout(() => storage.downloadBlob(f, f.name), i * 500));
-    $("saveDialogHint").textContent = "Beide Dateien wurden geladen (Ordner „Downloads“).";
+    $("saveDialogHint").textContent = exportFiles.length === 1 ? "Skizze wurde geladen (Ordner „Downloads“)." : "Beide Dateien wurden geladen (Ordner „Downloads“).";
   });
-  $("saveClose").addEventListener("click", () => { closeDialog(saveDialog); clearExportUrls(); exportFiles = null; });
+  $("saveClose").addEventListener("click", () => { closeDialog(saveDialog); clearExportUrls(); exportFiles = null; $("previewOriginalFigure").hidden = false; $("saveDialogTitle").textContent = "Zwei Fotos sichern"; $("saveShare").textContent = "📲 Beide in Fotos sichern"; });
 
   // ---------- Allgemeine Dialog-Helfer ----------
   let lastDialogOpen = 0;
