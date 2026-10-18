@@ -37,14 +37,6 @@
       <p id="photoStatus" class="status-inline">Noch kein Foto</p>
     </section>
 
-    <section class="panel quick-tools-panel" aria-label="Schnellwerkzeuge">
-      <div class="quick-tools" role="toolbar" aria-label="Wichtige Werkzeuge">
-        <button class="tool active" data-tool="select" type="button">↖ Auswahl</button>
-        <button class="tool" data-tool="measure" type="button">＋ Maß</button>
-        <button class="tool" data-tool="reference" type="button">⚖ Referenz</button>
-        <button class="tool" data-tool="contourMarker" type="button">🖍 Kontur</button>
-      </div>
-    </section>
     <section class="panel editor-panel">
       <div id="canvasWrap" class="canvas-wrap">
         <div id="emptyState" class="empty-state">
@@ -72,37 +64,20 @@
           Fadenkreuz
         </label>
       </div>
-      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden Maßlinienwerte aus dem Maßstab berechnet</p>
-      <section class="panel quick-tools-panel lower-tools-panel" aria-label="Weitere Zeichenwerkzeuge">
-        <div class="quick-tools lower-quick-tools" role="toolbar" aria-label="Weitere Zeichenwerkzeuge">
+      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden neue Maßlinien berechnet</p>
+
+      <div class="toolbox">
+        <div class="tool-grid">
+          <button class="tool active" data-tool="select" type="button">↖ Auswählen</button>
+          <button class="tool" data-tool="measure" type="button">＋ Maß</button>
+          <button class="tool" data-tool="reference" type="button">⚖ Referenz</button>
           <button class="tool" data-tool="angle" type="button">∠ Winkel</button>
           <button class="tool" data-tool="freehand" type="button">✎ Frei</button>
           <button class="tool" data-tool="line" type="button">／ Linie</button>
-          <button class="tool" data-tool="rect" type="button">□ Rechteck</button>
+          <button class="tool" data-tool="rect" type="button">□ Rect</button>
           <button class="tool" data-tool="text" type="button">T Text</button>
-          <button class="tool" data-tool="eraser" type="button">⌫ Löschen</button>
+          <button class="tool" data-tool="eraser" type="button">⌫ Lösch</button>
         </div>
-      </section>
-      <details class="auto-mode-row panel-subtle compact-disclosure" aria-label="Automatische Maßlinienfunktion"><summary>Automatik · Maßlinienvorschläge</summary>
-        <label for="autoMeasureMode"><strong>Maßlinien-Automatik</strong>
-          <select id="autoMeasureMode">
-            <option value="suggestions">Modus C: Vorschläge prüfen</option>
-            <option value="maximum">Modus C: Maximale Automatik</option>
-          </select>
-        </label>
-        <p id="autoMeasureModeHint" class="hint">Vorschläge werden im Foto markiert. Jede Maßlinie muss einzeln übernommen werden.</p>
-        <button id="detectMeasureSuggestions" class="secondary" type="button" disabled>⌕ Mögliche Maßlinien suchen</button>
-        <div class="button-row" style="margin-top:6px;gap:6px"><button id="suggestFromContours" class="secondary" type="button" disabled>↳ Vorschläge aus Markierungen</button><button id="clearContourMarks" class="secondary compact" type="button" disabled>Markierungen löschen</button></div>
-        <div class="button-row" style="margin-top:6px;gap:6px">
-          <button id="setAnalysisRoi" class="secondary compact" type="button" disabled>▭ Suchbereich setzen</button>
-          <button id="clearAnalysisRoi" class="secondary compact" type="button" disabled>Bereich lösen</button>
-          <button id="clearMeasureSuggestions" class="secondary compact" type="button" disabled>Vorschläge verwerfen</button>
-        </div>
-        <p class="hint">Tipp: Kontur markieren → „Vorschläge aus Markierungen“. Jeder Vorschlag bleibt unverbindlich und muss einzeln bestätigt werden.</p>
-      </details>
-
-      <details class="toolbox compact-disclosure"><summary>Weitere Werkzeuge &amp; Einstellungen</summary>
-        <p class="hint">Die vier Hauptwerkzeuge stehen oberhalb des Fotos, weitere Zeichenwerkzeuge direkt darunter. Hier findest du nur Einstellungen und Zusatzfunktionen.</p>
         <div class="button-row" style="margin-top:8px"><button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button></div>
         <div class="button-row image-tools">
           <button id="insertImageButton" class="secondary" type="button">🖼 Bild einfügen / zuschneiden</button>
@@ -129,7 +104,7 @@
             Einrasten
           </label>
         </div>
-      </details>
+      </div>
 
       <div class="button-row action-row">
         <button id="undo" class="secondary" type="button" disabled>↶ Zurück</button>
@@ -149,10 +124,6 @@
       </div>
       <div id="measureList" class="measure-list">
         <p class="empty-list">Noch keine Maßlinien.</p>
-      </div>
-      <div class="suggestions-panel">
-        <div class="section-heading"><h3>Maßlinienvorschläge</h3><span id="suggestionCount" class="hint">0 offen</span></div>
-        <div id="measureSuggestionsList" class="measure-suggestions-list"><p class="empty-list">Noch keine Vorschläge. Tippe auf „Mögliche Maßlinien suchen“.</p></div>
       </div>
     </section>
 

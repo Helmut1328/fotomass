@@ -64,13 +64,6 @@
   let selectedId = null;
   let anglePoints = [];
   let measures = [];
-  let measureSuggestions = [];
-  // Temporäre Freihand-Konturen: Suchhilfe, keine exportierten Zeichnungen.
-  let contourMarks = [];
-  let nextContourMarkId = 1;
-  let selectedSuggestionId = null;
-  let nextSuggestionId = 1;
-  let analysisRoi = null; // optionaler Suchbereich in Bildkoordinaten
   let drawings = [];
   let selectedDrawingId = null;
   let cropSourceImage = null;
@@ -205,19 +198,12 @@
     buttons.exportProject.disabled = !ready;
     buttons.clear.disabled = !ready;
     buttons.save.disabled = !ready;
-    const detectButton = $("detectMeasureSuggestions"); if (detectButton) detectButton.disabled = !ready;
-    const setRoi = $("setAnalysisRoi"); if (setRoi) setRoi.disabled = !ready;
-    const clearRoi = $("clearAnalysisRoi"); if (clearRoi) clearRoi.disabled = !ready || !analysisRoi;
-    const clearSug = $("clearMeasureSuggestions"); if (clearSug) clearSug.disabled = !ready;
-    const contourBtn = $("suggestFromContours"); if (contourBtn) contourBtn.disabled = !ready || !contourMarks.length;
-    const clearMarks = $("clearContourMarks"); if (clearMarks) clearMarks.disabled = !ready || !contourMarks.length;
     updateHistoryButtons();
   }
 
   // Nach jeder Änderung: Liste + Zeichnung neu, Zwischenspeicher planen
   function refresh() {
     renderMeasureList();
-    renderMeasureSuggestionsList();
     draw();
     scheduleAutosave();
   }
@@ -315,8 +301,6 @@
         g.restore();
       }
     }
-    if (!forExport && contourMarks.length) drawContourMarks(g, k);
-    if (!forExport && measureSuggestions.length) drawMeasureSuggestions(g, k);
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
     if (tool === "angle" && anglePoints.length) {
@@ -326,7 +310,6 @@
     }
     if (activeDrawing && !/^(move-|text-place|angle-point)/.test(activeDrawing.type)) {
       if (activeDrawing.type === "measure" || activeDrawing.type === "reference") drawMeasurePreview(g, activeDrawing, k);
-      else if (activeDrawing.type === "contourMarker") drawContourMarks(g, k);
       else drawShape(g, activeDrawing, k);
     }
     if (snapPoint) {
@@ -342,590 +325,6 @@
     }
   }
   function draw() { if (photoLoaded) paint(ctx, false); }
-
-  // Vorschläge bleiben separate Overlay-Objekte und werden nie in den Export eingebrannt,
-  // bevor der Nutzer sie einzeln bestätigt.
-  function drawContourMarks(g, k) {
-    g.save();
-    g.lineCap = "round"; g.lineJoin = "round";
-    const paths = contourMarks.slice();
-    if (activeDrawing && activeDrawing.type === "contourMarker" && activeDrawing.points) paths.push(activeDrawing);
-    paths.forEach((mark) => {
-      if (!mark.points || mark.points.length < 2) return;
-      g.beginPath(); g.moveTo(mark.points[0].x, mark.points[0].y);
-      for (let i = 1; i < mark.points.length; i++) g.lineTo(mark.points[i].x, mark.points[i].y);
-      // translucent broad marker stroke remains visible over the photo
-      g.strokeStyle = "rgba(255, 59, 48, 0.42)";
-      g.lineWidth = Math.max(scr(10), 10 * k);
-      g.stroke();
-      g.strokeStyle = "rgba(255, 59, 48, 0.95)";
-      g.lineWidth = Math.max(scr(2), 2 * k);
-      g.stroke();
-    });
-    g.restore();
-  }
-
-  function simplifyContour(points, tolerance) {
-    if (!points || points.length <= 2) return points || [];
-    const first = points[0], last = points[points.length - 1];
-    const dx = last.x - first.x, dy = last.y - first.y;
-    const denom = Math.hypot(dx, dy) || 1;
-    let maxDist = 0, maxIndex = 0;
-    for (let i = 1; i < points.length - 1; i++) {
-      const distLine = Math.abs(dy * points[i].x - dx * points[i].y + last.x * first.y - last.y * first.x) / denom;
-      if (distLine > maxDist) { maxDist = distLine; maxIndex = i; }
-    }
-    if (maxDist <= tolerance) return [first, last];
-    const left = simplifyContour(points.slice(0, maxIndex + 1), tolerance);
-    const right = simplifyContour(points.slice(maxIndex), tolerance);
-    return left.slice(0, -1).concat(right);
-  }
-
-  // Nutzt die Markierung als Suchkorridor, nicht als Ergebnislinie.
-  // Entlang des Strichs werden echte Bildgradienten senkrecht zur Markierung gesucht.
-  // Die Treffer werden anschließend zu einer neuen, an Bildkanten orientierten Linie angepasst.
-  function snapMarkedSegmentToImageEdge(a, b) {
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 8) return { a, b, strength: 0, snapped: false };
-    const ux = dx / len, uy = dy / len;
-    const nx = -uy, ny = ux;
-    const w = baseCanvas.width, h = baseCanvas.height;
-    const pixels = baseCanvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-    const lum = (x, y) => {
-      const q = (y * w + x) * 4;
-      return 0.299 * pixels[q] + 0.587 * pixels[q + 1] + 0.114 * pixels[q + 2];
-    };
-    const gradNormal = (x, y) => {
-      const ix = Math.round(x), iy = Math.round(y);
-      if (ix < 2 || iy < 2 || ix >= w - 2 || iy >= h - 2) return 0;
-      // Gradient in Richtung senkrecht zum markierten Segment.
-      const gx = lum(ix + 1, iy - 1) - lum(ix - 1, iy - 1)
-        + 2 * (lum(ix + 1, iy) - lum(ix - 1, iy))
-        + lum(ix + 1, iy + 1) - lum(ix - 1, iy + 1);
-      const gy = lum(ix - 1, iy + 1) - lum(ix - 1, iy - 1)
-        + 2 * (lum(ix, iy + 1) - lum(ix, iy - 1))
-        + lum(ix + 1, iy + 1) - lum(ix + 1, iy - 1);
-      return Math.abs(gx * nx + gy * ny);
-    };
-    const radius = Math.max(8, Math.min(36, Math.round(Math.min(w, h) * 0.018)));
-    const samples = Math.max(12, Math.min(100, Math.round(len / 5)));
-    const hits = [];
-    let previousOffset = null;
-    for (let i = 0; i <= samples; i++) {
-      const t = i / samples;
-      const px = a.x + dx * t, py = a.y + dy * t;
-      let best = { score: 0, off: 0 };
-      for (let off = -radius; off <= radius; off += 2) {
-        const score = gradNormal(px + nx * off, py + ny * off);
-        // Kleine Kontinuitätspräferenz verhindert, dass die Suche zwischen Maserungskanten springt.
-        const continuityPenalty = previousOffset === null ? 0 : Math.abs(off - previousOffset) * 0.8;
-        const adjusted = score - continuityPenalty;
-        if (adjusted > best.score) best = { score: adjusted, raw: score, off };
-      }
-      if ((best.raw || 0) >= 18) {
-        hits.push({ x: px + nx * best.off, y: py + ny * best.off, t, off: best.off, strength: best.raw });
-        previousOffset = best.off;
-      }
-    }
-    // Bei zu wenigen oder zu schwachen Treffern die Markierung unverändert lassen und ehrlich kennzeichnen.
-    if (hits.length < Math.max(5, Math.round(samples * 0.22))) {
-      return { a, b, strength: hits.length ? hits.reduce((v, p) => v + p.strength, 0) / hits.length : 0, snapped: false };
-    }
-    // Robuste Gerade per Hauptachsenrichtung (PCA) aus den gefundenen Bildkantenpunkten.
-    const mx = hits.reduce((v, p) => v + p.x, 0) / hits.length;
-    const my = hits.reduce((v, p) => v + p.y, 0) / hits.length;
-    let xx = 0, yy = 0, xy = 0;
-    for (const p of hits) { const x = p.x - mx, y = p.y - my; xx += x*x; yy += y*y; xy += x*y; }
-    const theta = 0.5 * Math.atan2(2 * xy, xx - yy);
-    let vx = Math.cos(theta), vy = Math.sin(theta);
-    if (vx * ux + vy * uy < 0) { vx = -vx; vy = -vy; }
-    const projections = hits.map(p => (p.x - mx) * vx + (p.y - my) * vy);
-    const minT = Math.min(...projections), maxT = Math.max(...projections);
-    const coverage = (maxT - minT) / len;
-    // Nur übernehmen, wenn die erkannte Kante über einen sinnvollen Teil der Markierung verläuft.
-    if (coverage < 0.38) {
-      return { a, b, strength: hits.reduce((v, p) => v + p.strength, 0) / hits.length, snapped: false };
-    }
-    const strength = hits.reduce((v, p) => v + p.strength, 0) / hits.length;
-    return {
-      a: { x: mx + vx * minT, y: my + vy * minT },
-      b: { x: mx + vx * maxT, y: my + vy * maxT },
-      strength, snapped: true
-    };
-  }
-
-  function suggestionsFromContourMarks() {
-    const candidates = [];
-    // Marker is a search guide only. Never return an unsnapped marker as a detected edge.
-    const minSegmentLength = Math.max(48, canvas.width / 22);
-    const simplifyTolerance = Math.max(9, canvas.width / 90);
-    contourMarks.forEach((mark) => {
-      const pts = simplifyContour(mark.points, simplifyTolerance);
-      const snappedParts = [];
-      for (let i = 1; i < pts.length; i++) {
-        const a = pts[i - 1], b = pts[i];
-        const len = Math.hypot(b.x-a.x, b.y-a.y);
-        if (len < minSegmentLength) continue;
-        const snapped = snapMarkedSegmentToImageEdge(a,b);
-        if (!snapped.snapped || snapped.strength < 22) continue;
-        const dx=snapped.b.x-snapped.a.x, dy=snapped.b.y-snapped.a.y;
-        snappedParts.push({a:snapped.a,b:snapped.b,angle:Math.atan2(dy,dx),strength:snapped.strength});
-      }
-      // Merge adjacent near-collinear segments to avoid dozens of suggestions from one stroke.
-      const groups=[];
-      for (const part of snappedParts) {
-        const last=groups[groups.length-1];
-        if (last) {
-          const angleDiff=Math.abs(Math.atan2(Math.sin(part.angle-last.angle),Math.cos(part.angle-last.angle)));
-          const gap=Math.hypot(part.a.x-last.b.x,part.a.y-last.b.y);
-          if (angleDiff<18*Math.PI/180 && gap<Math.max(32,canvas.width/35)) {
-            last.parts.push(part); last.b=part.b; last.strength=(last.strength+part.strength)/2; continue;
-          }
-        }
-        groups.push({a:part.a,b:part.b,angle:part.angle,strength:part.strength,parts:[part]});
-      }
-      for (const group of groups) {
-        const points=group.parts.flatMap(p=>[p.a,p.b]); if(points.length<2) continue;
-        const mx=points.reduce((s,p)=>s+p.x,0)/points.length, my=points.reduce((s,p)=>s+p.y,0)/points.length;
-        let xx=0,yy=0,xy=0;
-        for(const p of points){const x=p.x-mx,y=p.y-my;xx+=x*x;yy+=y*y;xy+=x*y;}
-        const theta=0.5*Math.atan2(2*xy,xx-yy), vx=Math.cos(theta),vy=Math.sin(theta);
-        const proj=points.map(p=>(p.x-mx)*vx+(p.y-my)*vy), minT=Math.min(...proj),maxT=Math.max(...proj);
-        if(maxT-minT<minSegmentLength) continue;
-        const x1=mx+vx*minT,y1=my+vy*minT,x2=mx+vx*maxT,y2=my+vy*maxT;
-        const angle=Math.atan2(y2-y1,x2-x1)*180/Math.PI;
-        const orientation=Math.abs(angle)<20||Math.abs(angle)>160?'horizontal':(Math.abs(angle)>70&&Math.abs(angle)<110?'vertical':'diagonal');
-        candidates.push({id:nextSuggestionId++,x1,y1,x2,y2,orientation,source:'marker',edgeStrength:group.strength,snapped:true});
-      }
-    });
-    return candidates;
-  }
-
-  function drawMeasureSuggestions(g, k) {
-    g.save();
-    measureSuggestions.forEach((s, index) => {
-      const selected = s.id === selectedSuggestionId;
-      const base = s.orientation === "horizontal" ? "#00b8d9" : (s.orientation === "vertical" ? "#b35cff" : "#ff9f1c");
-      g.strokeStyle = selected ? "#ffeb3b" : base;
-      g.fillStyle = g.strokeStyle;
-      g.lineWidth = Math.max((selected ? 3.5 : 2) * k, scr(selected ? 3 : 2));
-      g.setLineDash(selected ? [] : [7 * k, 5 * k]);
-      g.beginPath(); g.moveTo(s.x1, s.y1); g.lineTo(s.x2, s.y2); g.stroke();
-      g.setLineDash([]);
-      const r = (selected ? 6 : 4) * k;
-      [[s.x1, s.y1], [s.x2, s.y2]].forEach(([x, y]) => {
-        g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-        if (selected) { g.strokeStyle = "#17212b"; g.lineWidth = Math.max(1.5 * k, scr(1.5)); g.stroke(); g.strokeStyle = g.fillStyle; }
-      });
-      const label = `V${index + 1}`;
-      g.font = `bold ${Math.max(12 * k, scr(12))}px system-ui, sans-serif`;
-      const tx = (s.x1 + s.x2) / 2, ty = (s.y1 + s.y2) / 2;
-      g.fillStyle = selected ? "rgba(255,235,59,.95)" : "rgba(20,30,40,.82)";
-      g.fillRect(tx - 12 * k, ty - 18 * k, 24 * k, 16 * k);
-      g.fillStyle = selected ? "#17212b" : "#fff";
-      g.textAlign = "center"; g.textBaseline = "middle";
-      g.fillText(label, tx, ty - 10 * k);
-    });
-    // optionalen Suchbereich andeuten
-    if (analysisRoi) {
-      g.strokeStyle = "rgba(255,200,40,.85)";
-      g.lineWidth = Math.max(2 * k, scr(2));
-      g.setLineDash([6 * k, 4 * k]);
-      const r = analysisRoi;
-      g.strokeRect(Math.min(r.x1, r.x2), Math.min(r.y1, r.y2), Math.abs(r.x2 - r.x1), Math.abs(r.y2 - r.y1));
-      g.setLineDash([]);
-    }
-    g.restore();
-  }
-
-  // Verbesserte lokale Kantenerkennung (Modus C):
-  // Ursache der bisherigen schwachen Ergebnisse: Hough-Stimmen nur im exakten
-  // Gradienten-Winkel-Bin → bei realen Smartphone-Fotos mit Winkelrauschen
-  // streuen die Stimmen und wichtige Kanten bilden keinen Peak.
-  // Änderungen: leichte Glättung, Winkel-Toleranz beim Voting, robustere
-  // Segmentbildung mit größeren Lücken, Scoring nach Länge/Kontinuität/Stärke.
-  // Ergebnisse bleiben unverbindliche Vorschläge.
-  function detectImageEdgeSuggestions(roi) {
-    if (!photoLoaded) return [];
-    const sourceW = baseCanvas.width, sourceH = baseCanvas.height;
-    const maxAnalysisSide = 900;
-    const scale = Math.min(1, maxAnalysisSide / Math.max(sourceW, sourceH));
-    const aw = Math.max(3, Math.round(sourceW * scale));
-    const ah = Math.max(3, Math.round(sourceH * scale));
-    const analysisCanvas = document.createElement("canvas");
-    analysisCanvas.width = aw; analysisCanvas.height = ah;
-    const ag = analysisCanvas.getContext("2d", { willReadFrequently: true });
-    ag.drawImage(baseCanvas, 0, 0, aw, ah);
-    const data = ag.getImageData(0, 0, aw, ah).data;
-    const size = aw * ah;
-    const gray0 = new Float32Array(size);
-    for (let i = 0, j = 0; i < size; i++, j += 4) {
-      gray0[i] = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
-    }
-    // 3x3 Box-Blur (schnell, dämpft Maserung/Rauschen ohne Kanten zu zerstören)
-    const gray = new Float32Array(size);
-    for (let y = 0; y < ah; y++) {
-      for (let x = 0; x < aw; x++) {
-        let sum = 0, n = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          const yy = y + dy; if (yy < 0 || yy >= ah) continue;
-          const row = yy * aw;
-          for (let dx = -1; dx <= 1; dx++) {
-            const xx = x + dx; if (xx < 0 || xx >= aw) continue;
-            sum += gray0[row + xx]; n++;
-          }
-        }
-        gray[y * aw + x] = sum / n;
-      }
-    }
-
-    // Optionaler Analysebereich (ROI) in Analysekoordinaten
-    let x0 = 1, y0 = 1, x1b = aw - 2, y1b = ah - 2;
-    if (roi && Number.isFinite(roi.x1)) {
-      const sx = aw / sourceW, sy = ah / sourceH;
-      x0 = Math.max(1, Math.floor(Math.min(roi.x1, roi.x2) * sx));
-      y0 = Math.max(1, Math.floor(Math.min(roi.y1, roi.y2) * sy));
-      x1b = Math.min(aw - 2, Math.ceil(Math.max(roi.x1, roi.x2) * sx));
-      y1b = Math.min(ah - 2, Math.ceil(Math.max(roi.y1, roi.y2) * sy));
-      if (x1b - x0 < 8 || y1b - y0 < 8) { x0 = 1; y0 = 1; x1b = aw - 2; y1b = ah - 2; }
-    }
-
-    const magnitude = new Float32Array(size);
-    const angle = new Float32Array(size);
-    const histogram = new Uint32Array(256);
-    let eligible = 0;
-    for (let y = y0; y <= y1b; y++) {
-      const row = y * aw;
-      for (let x = x0; x <= x1b; x++) {
-        const i = row + x;
-        const gx = -gray[i - aw - 1] + gray[i - aw + 1] - 2 * gray[i - 1] + 2 * gray[i + 1] - gray[i + aw - 1] + gray[i + aw + 1];
-        const gy = -gray[i - aw - 1] - 2 * gray[i - aw] - gray[i - aw + 1] + gray[i + aw - 1] + 2 * gray[i + aw] + gray[i + aw + 1];
-        const mag = Math.hypot(gx, gy);
-        magnitude[i] = mag;
-        if (mag >= 8) { histogram[Math.min(255, Math.floor(mag / 5))]++; eligible++; }
-        let a = Math.atan2(gy, gx);
-        if (a < 0) a += Math.PI;
-        if (a >= Math.PI) a -= Math.PI;
-        angle[i] = a;
-      }
-    }
-    if (eligible < 25) return [];
-
-    // Adaptiver Schwellenwert (etwas milder als zuvor, damit weiche Möbelkanten bleiben)
-    const target = Math.floor(eligible * 0.30);
-    let cumulative = 0, quantile = 3;
-    for (let b = 1; b < histogram.length; b++) {
-      cumulative += histogram[b];
-      if (cumulative >= target) { quantile = b; break; }
-    }
-    const threshold = Math.max(8, Math.min(38, quantile * 5 * 0.58));
-
-    // Nichtmaximum-Unterdrückung + Kantensammlung
-    const edgeX = [], edgeY = [], edgeMag = [], edgeAngle = [];
-    for (let y = Math.max(2, y0); y <= Math.min(ah - 3, y1b); y++) {
-      const row = y * aw;
-      for (let x = Math.max(2, x0); x <= Math.min(aw - 3, x1b); x++) {
-        const i = row + x, mag = magnitude[i];
-        if (mag < threshold) continue;
-        const a = angle[i];
-        // 4 Richtungs-Quantisierung für NMS (robuster als round(cos/sin))
-        const sector = Math.round(a / (Math.PI / 4)) % 4;
-        let xStep = 0, yStep = 0;
-        if (sector === 0) { xStep = 1; yStep = 0; }
-        else if (sector === 1) { xStep = 1; yStep = 1; }
-        else if (sector === 2) { xStep = 0; yStep = 1; }
-        else { xStep = 1; yStep = -1; }
-        const m1 = magnitude[(y - yStep) * aw + (x - xStep)];
-        const m2 = magnitude[(y + yStep) * aw + (x + xStep)];
-        if (mag < m1 || mag < m2) continue;
-        edgeX.push(x); edgeY.push(y); edgeMag.push(mag); edgeAngle.push(a);
-      }
-    }
-    const edgeCount = edgeX.length;
-    if (edgeCount < 16) return [];
-
-    // Hough mit Winkel-Toleranz: jeder Kantenpunkt stimmt in ±2 Bins ab
-    const thetaBins = 36; // 5°
-    const diagonal = Math.ceil(Math.hypot(aw, ah));
-    const rhoCount = diagonal * 2 + 1;
-    const accumulator = new Float32Array(thetaBins * rhoCount);
-    const cosT = new Float32Array(thetaBins), sinT = new Float32Array(thetaBins);
-    for (let t = 0; t < thetaBins; t++) {
-      const a = t * Math.PI / thetaBins;
-      cosT[t] = Math.cos(a); sinT[t] = Math.sin(a);
-    }
-    const angleSpread = 2; // ±2 Bins ≈ ±10°
-    for (let i = 0; i < edgeCount; i++) {
-      const baseT = Math.round(edgeAngle[i] * thetaBins / Math.PI);
-      const weight = Math.min(2.5, 0.6 + edgeMag[i] / 40);
-      for (let dt = -angleSpread; dt <= angleSpread; dt++) {
-        let t = (baseT + dt) % thetaBins;
-        if (t < 0) t += thetaBins;
-        const rho = Math.round(edgeX[i] * cosT[t] + edgeY[i] * sinT[t]) + diagonal;
-        if (rho >= 0 && rho < rhoCount) {
-          // weichere Stimmen in den Nachbarbins
-          const w = weight * (dt === 0 ? 1 : 0.55);
-          accumulator[t * rhoCount + rho] += w;
-        }
-      }
-    }
-
-    const minVotes = Math.max(8, Math.round(Math.min(aw, ah) * 0.012));
-    const peaks = [];
-    for (let t = 0; t < thetaBins; t++) {
-      const off = t * rhoCount;
-      for (let r = 2; r < rhoCount - 2; r++) {
-        const votes = accumulator[off + r];
-        if (votes < minVotes) continue;
-        let isMax = true;
-        for (let dr = -2; dr <= 2 && isMax; dr++) {
-          if (dr !== 0 && accumulator[off + r + dr] > votes) isMax = false;
-        }
-        // auch gegen benachbarte Winkel prüfen (unterdrückt Doppelpeaks)
-        if (isMax) {
-          for (let dt = -1; dt <= 1 && isMax; dt++) {
-            if (dt === 0) continue;
-            let t2 = (t + dt) % thetaBins; if (t2 < 0) t2 += thetaBins;
-            if (accumulator[t2 * rhoCount + r] > votes * 1.05) isMax = false;
-          }
-        }
-        if (isMax) peaks.push({ t, rho: r - diagonal, votes });
-      }
-    }
-    peaks.sort((a, b) => b.votes - a.votes);
-
-    const candidates = [];
-    const maxPeaks = Math.min(180, peaks.length);
-    const minSegmentLength = Math.max(16, Math.min(aw, ah) * 0.022);
-    const gapTol = Math.max(10, Math.round(Math.min(aw, ah) * 0.022)); // stärkere Toleranz für Kantenunterbrechungen
-
-    for (let pi = 0; pi < maxPeaks; pi++) {
-      const peak = peaks[pi];
-      const theta = peak.t * Math.PI / thetaBins;
-      const ct = cosT[peak.t], st = sinT[peak.t];
-      const points = [];
-      for (let i = 0; i < edgeCount; i++) {
-        let da = Math.abs(edgeAngle[i] - theta);
-        da = Math.min(da, Math.PI - da);
-        if (da > Math.PI * 25 / 180) continue; // breite Winkeltoleranz für perspektivische/raue Kanten
-        const distance = Math.abs(edgeX[i] * ct + edgeY[i] * st - peak.rho);
-        if (distance > 2.6) continue;
-        points.push({ t: -edgeX[i] * st + edgeY[i] * ct, x: edgeX[i], y: edgeY[i], mag: edgeMag[i] });
-      }
-      if (points.length < Math.max(8, minVotes * 0.7)) continue;
-      points.sort((a, b) => a.t - b.t);
-
-      let group = [];
-      const flush = () => {
-        if (group.length < 8) { group = []; return; }
-        const first = group[0], last = group[group.length - 1];
-        const length = last.t - first.t;
-        if (length < minSegmentLength) { group = []; return; }
-        const density = group.length / Math.max(1, length);
-        if (density < 0.035) { group = []; return; }
-        const x1 = peak.rho * ct + first.t * (-st);
-        const y1 = peak.rho * st + first.t * ct;
-        const x2 = peak.rho * ct + last.t * (-st);
-        const y2 = peak.rho * st + last.t * ct;
-        const lineAngle = (Math.atan2(y2 - y1, x2 - x1) + Math.PI * 2) % Math.PI;
-        const deg = lineAngle * 180 / Math.PI;
-        const orientation = (deg < 14 || deg > 166) ? "horizontal" : (Math.abs(deg - 90) < 14 ? "vertical" : "diagonal");
-        const avgMag = group.reduce((s, q) => s + q.mag, 0) / group.length;
-        // Länge und Kontinuität stärker gewichten; leichte Bevorzugung von H/V (Möbel)
-        const orientBonus = 1.0; // keine Bevorzugung von horizontal/vertikal: Perspektivkanten gleich behandeln
-        const score = length * Math.min(2.2, density * 12) * (avgMag / 35) * orientBonus;
-        candidates.push({
-          orientation,
-          x1: x1 * (sourceW / aw), y1: y1 * (sourceH / ah),
-          x2: x2 * (sourceW / aw), y2: y2 * (sourceH / ah),
-          score, angle: lineAngle
-        });
-        group = [];
-      };
-      for (const q of points) {
-        if (group.length && q.t - group[group.length - 1].t > gapTol) flush();
-        group.push(q);
-      }
-      flush();
-    }
-
-    candidates.sort((a, b) => b.score - a.score);
-    const chosen = [];
-    const imgMin = Math.min(sourceW, sourceH);
-    for (const c of candidates) {
-      const cdx = c.x2 - c.x1, cdy = c.y2 - c.y1;
-      const clen = Math.max(1, Math.hypot(cdx, cdy));
-      if (clen < Math.max(22, imgMin * 0.025)) continue;
-      const similar = chosen.some((o) => {
-        const odx = o.x2 - o.x1, ody = o.y2 - o.y1;
-        const olen = Math.max(1, Math.hypot(odx, ody));
-        const a1 = Math.atan2(cdy, cdx), a2 = Math.atan2(ody, odx);
-        let da = Math.abs(a1 - a2) % Math.PI; da = Math.min(da, Math.PI - da);
-        if (da > 10 * Math.PI / 180) return false;
-        const cmx = (c.x1 + c.x2) / 2, cmy = (c.y1 + c.y2) / 2;
-        const omx = (o.x1 + o.x2) / 2, omy = (o.y1 + o.y2) / 2;
-        const normalDistance = Math.abs((cmx - omx) * (-ody / olen) + (cmy - omy) * (odx / olen));
-        if (normalDistance > Math.max(6, imgMin * 0.014)) return false;
-        const ux = odx / olen, uy = ody / olen;
-        const ca = c.x1 * ux + c.y1 * uy, cb = c.x2 * ux + c.y2 * uy;
-        const oa = o.x1 * ux + o.y1 * uy, ob = o.x2 * ux + o.y2 * uy;
-        const overlap = Math.max(0, Math.min(Math.max(ca, cb), Math.max(oa, ob)) - Math.max(Math.min(ca, cb), Math.min(oa, ob)));
-        return overlap / Math.max(1, Math.min(clen, olen)) > 0.42;
-      });
-      if (!similar) chosen.push(c);
-      if (chosen.length >= 24) break;
-    }
-    return chosen.map((c) => ({
-      orientation: c.orientation,
-      x1: Math.max(0, Math.min(sourceW - 1, c.x1)),
-      y1: Math.max(0, Math.min(sourceH - 1, c.y1)),
-      x2: Math.max(0, Math.min(sourceW - 1, c.x2)),
-      y2: Math.max(0, Math.min(sourceH - 1, c.y2)),
-      score: c.score,
-      id: nextSuggestionId++
-    }));
-  }
-
-  function renderMeasureSuggestionsList() {
-    const list = $("measureSuggestionsList"), count = $("suggestionCount");
-    if (!list) return;
-    list.replaceChildren();
-    if (count) count.textContent = `${measureSuggestions.length} offen`;
-    if (!measureSuggestions.length) {
-      const p = document.createElement("p");
-      p.className = "empty-list";
-      p.textContent = "Noch keine Vorschläge. Tippe auf „Mögliche Maßlinien suchen“.";
-      list.append(p);
-      return;
-    }
-    measureSuggestions.forEach((s, i) => {
-      const row = document.createElement("div");
-      row.className = "suggestion-item" + (s.id === selectedSuggestionId ? " selected" : "");
-      row.setAttribute("role", "button");
-      row.tabIndex = 0;
-      const info = document.createElement("div");
-      info.className = "suggestion-info";
-      const title = document.createElement("strong");
-      title.textContent = `Vorschlag ${i + 1} · ${s.orientation === "horizontal" ? "waagerecht" : (s.orientation === "vertical" ? "senkrecht" : "schräg")}`;
-      const detail = document.createElement("small");
-      detail.textContent = `ca. ${Math.round(Math.hypot(s.x2 - s.x1, s.y2 - s.y1))} Bildpixel${s.source === "marker" ? (s.snapped ? " · Bildkante erkannt" : " · keine eindeutige Bildkante") : ""} · tippen zum Hervorheben`;
-      info.append(title, detail);
-      const accept = document.createElement("button");
-      accept.type = "button";
-      accept.className = "suggestion-accept";
-      accept.textContent = "Übernehmen";
-      accept.addEventListener("click", (ev) => { ev.stopPropagation(); acceptMeasureSuggestion(s.id); });
-      const dismiss = document.createElement("button");
-      dismiss.type = "button";
-      dismiss.className = "secondary suggestion-dismiss";
-      dismiss.textContent = "Verwerfen";
-      dismiss.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        measureSuggestions = measureSuggestions.filter((x) => x.id !== s.id);
-        if (selectedSuggestionId === s.id) selectedSuggestionId = null;
-        renderMeasureSuggestionsList();
-        draw();
-      });
-      row.addEventListener("click", () => {
-        selectedSuggestionId = s.id;
-        renderMeasureSuggestionsList();
-        draw();
-      });
-      row.append(info, accept, dismiss);
-      list.append(row);
-    });
-  }
-  function acceptMeasureSuggestion(id) {
-    const s = measureSuggestions.find((x) => x.id === id);
-    if (!s) return;
-    const before = snapshot();
-    const m = {
-      id: nextId++, type: "linear", isReference: false,
-      x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2,
-      value: "", unit: unitSelect.value, color: colorInput.value,
-      textBg: $("textBgToggle").checked, autoCalculated: false
-    };
-    const value = calculatedValueFor(m, m.unit);
-    if (value !== null) { m.value = value; m.autoCalculated = true; }
-    pushHistory(before);
-    measures.push(m);
-    selectedId = m.id;
-    measureSuggestions = measureSuggestions.filter((x) => x.id !== id);
-    if (selectedSuggestionId === id) selectedSuggestionId = null;
-    refresh();
-    renderMeasureSuggestionsList();
-    setTool("select");
-    if (!m.autoCalculated) openValueDialog(m.id, { isNew: true });
-    else setStatus(`Vorschlag übernommen: ${fmt(m.value)}${m.unit || " mm"}. Bitte Maßstab und Kante kontrollieren.`);
-  }
-  function clearAllSuggestions() {
-    if (!measureSuggestions.length) return;
-    measureSuggestions = [];
-    selectedSuggestionId = null;
-    renderMeasureSuggestionsList();
-    draw();
-    setStatus("Alle unverbindlichen Vorschläge verworfen.");
-  }
-  $("detectMeasureSuggestions").addEventListener("click", () => {
-    if (!photoLoaded) return;
-    try {
-      measureSuggestions = detectImageEdgeSuggestions(analysisRoi);
-      selectedSuggestionId = measureSuggestions.length ? measureSuggestions[0].id : null;
-      renderMeasureSuggestionsList();
-      draw();
-      const roiNote = analysisRoi ? " (im markierten Bereich)" : "";
-      setStatus(measureSuggestions.length
-        ? `${measureSuggestions.length} mögliche Kanten gefunden${roiNote}. Prüfe jede Linie und übernimm nur passende Vorschläge.`
-        : "Keine ausreichend deutlichen Kanten gefunden. Schärferes Foto oder optional einen Suchbereich markieren.");
-    } catch (err) {
-      console.error("Kantenerkennung fehlgeschlagen", err);
-      setStatus("Die Kantenerkennung konnte dieses Foto nicht analysieren.");
-    }
-  });
-  const contourSuggestBtn = $("suggestFromContours");
-  if (contourSuggestBtn) contourSuggestBtn.addEventListener("click", () => {
-    if (!photoLoaded || !contourMarks.length) { setStatus("Markiere zuerst mit dem Konturmarker mindestens eine Kante."); return; }
-    const fromMarks = suggestionsFromContourMarks();
-    if (!fromMarks.length) { setStatus("Keine ausreichend langen Linien aus den Markierungen erkannt. Markiere die Kanten in längeren Abschnitten."); return; }
-    // Markierungsbasierte Vorschläge ersetzen nicht automatisch bestehende Vorschläge.
-    measureSuggestions = fromMarks;
-    selectedSuggestionId = measureSuggestions[0].id;
-    renderMeasureSuggestionsList(); draw();
-    setStatus(`${measureSuggestions.length} Vorschläge aus deinen Konturmarkierungen erstellt. Jede Maßlinie einzeln prüfen und übernehmen.`);
-  });
-  const clearMarksBtn = $("clearContourMarks");
-  if (clearMarksBtn) clearMarksBtn.addEventListener("click", () => {
-    contourMarks = []; draw(); setReady(photoLoaded); setStatus("Konturmarkierungen gelöscht.");
-  });
-
-  const clearSugBtn = $("clearMeasureSuggestions");
-  if (clearSugBtn) clearSugBtn.addEventListener("click", clearAllSuggestions);
-  const setRoiBtn = $("setAnalysisRoi");
-  if (setRoiBtn) setRoiBtn.addEventListener("click", () => {
-    if (!photoLoaded) return;
-    // Bevorzugt: ausgewähltes Rechteck als Suchbereich
-    const sel = drawings.find((d) => d.id === selectedDrawingId && d.type === "rect");
-    if (sel) {
-      analysisRoi = {
-        x1: Math.min(sel.x1, sel.x2), y1: Math.min(sel.y1, sel.y2),
-        x2: Math.max(sel.x1, sel.x2), y2: Math.max(sel.y1, sel.y2)
-      };
-      setReady(true);
-      draw();
-      setStatus("Suchbereich gesetzt. Tippe auf „Mögliche Maßlinien suchen“.");
-      return;
-    }
-    setStatus("Zuerst mit dem Rechteck-Werkzeug einen Rahmen um das Werkstück ziehen und auswählen, dann „Suchbereich setzen“.");
-  });
-  const clearRoiBtn = $("clearAnalysisRoi");
-  if (clearRoiBtn) clearRoiBtn.addEventListener("click", () => {
-    analysisRoi = null;
-    setReady(photoLoaded);
-    draw();
-    setStatus("Suchbereich gelöst – Erkennung nutzt wieder das ganze Foto.");
-  });
-
 
   function drawMeasurePreview(g, d, k) {
     g.save();
@@ -1322,24 +721,6 @@
       }
     });
   }
-  const autoMeasureMode = $("autoMeasureMode");
-  const autoMeasureModeHint = $("autoMeasureModeHint");
-  function currentAutoMeasureMode() { return autoMeasureMode && autoMeasureMode.value === "maximum" ? "maximum" : "suggestions"; }
-  function updateAutoMeasureModeHint() {
-    if (!autoMeasureModeHint) return;
-    autoMeasureModeHint.textContent = currentAutoMeasureMode() === "maximum"
-      ? "Maximale Automatik: Neue Maßlinien werden mit vorhandenem Referenzmaß direkt berechnet. Die Bildkanten selbst werden nicht automatisch erkannt."
-      : "Vorschlagsmodus: Bildkanten suchen, Vorschläge im Foto und in der Liste prüfen und jede Maßlinie einzeln übernehmen.";
-  }
-  try { if (autoMeasureMode) autoMeasureMode.value = localStorage.getItem("fm-auto-measure-mode") === "maximum" ? "maximum" : "suggestions"; } catch (_) {}
-  if (autoMeasureMode) {
-    updateAutoMeasureModeHint();
-    autoMeasureMode.addEventListener("change", () => {
-      try { localStorage.setItem("fm-auto-measure-mode", currentAutoMeasureMode()); } catch (_) {}
-      updateAutoMeasureModeHint();
-      setStatus(currentAutoMeasureMode() === "maximum" ? "Maximale Automatik aktiviert." : "Vorschlagsmodus aktiviert.");
-    });
-  }
   function calculateEmptyMeasuresFromReference() {
     measures.forEach((m) => {
       if (m.type !== "angle" && !m.isReference && !String(m.value || "").trim()) {
@@ -1352,7 +733,7 @@
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
-    measures = []; measureSuggestions = []; selectedSuggestionId = null; contourMarks = []; analysisRoi = null; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
+    measures = []; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
     activeDrawing = null; updateHistoryButtons();
   }
 
@@ -1447,7 +828,7 @@
         $("projectName").value = p.projectName;
         $("photoStatus").textContent = p.projectName || "Projekt geöffnet";
         unitSelect.value = p.unit; snapToggle.checked = p.snap; fontSizeInput.value = p.fontSize;
-        renderMeasureList(); renderMeasureSuggestionsList(); draw(); setReady(true);
+        renderMeasureList(); draw(); setReady(true);
         setSaveState("saved");
         resolve();
       };
@@ -1479,7 +860,7 @@
     canvas.style.display = "none";
     emptyState.hidden = false; emptyState.classList.remove("is-hidden"); emptyState.style.display = "";
     $("projectName").value = ""; $("photoStatus").textContent = "Noch kein Foto";
-    renderMeasureList(); renderMeasureSuggestionsList(); setReady(false); setSaveState("idle");
+    renderMeasureList(); setReady(false); setSaveState("idle");
   }
 
   // --- Neues Foto = neues Projekt (das bisherige bleibt in der Projektliste erhalten) ---
@@ -1502,7 +883,7 @@
       photoData = baseCanvas.toDataURL("image/jpeg", 0.9);
       $("photoStatus").textContent = file.name || "Foto geladen";
       originalBlob = file;
-      renderMeasureList(); renderMeasureSuggestionsList(); draw(); setReady(true);
+      renderMeasureList(); draw(); setReady(true);
       setStatus("Neues Projekt angelegt. Maßlinie ziehen – danach öffnet sich das Wert-Feld.");
       await storeOriginal(file);
       rev++;
@@ -2378,7 +1759,7 @@
       id: nextId++, type: tool,
       x1: p.x, y1: p.y, x2: p.x, y2: p.y,
       color: colorInput.value, width: Number(widthInput.value),
-      points: (tool === "freehand" || tool === "contourMarker") ? [p] : undefined,
+      points: tool === "freehand" ? [p] : undefined,
       fill: tool === "rect" ? !!(rectFillToggle && rectFillToggle.checked) : false,
       fillOpacity: tool === "rect" && rectFillOpacity ? Number(rectFillOpacity.value) / 100 : 1,
       value: "", unit: unitSelect.value
@@ -2504,9 +1885,9 @@
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
     }
     activeDrawing.x2 = p.x; activeDrawing.y2 = p.y;
-    if (activeDrawing.type === "freehand" || activeDrawing.type === "contourMarker") {
+    if (activeDrawing.type === "freehand") {
       const last = activeDrawing.points[activeDrawing.points.length - 1];
-      if (dist(last, p) > scr(activeDrawing.type === "contourMarker" ? 2 : 1.5)) activeDrawing.points.push(p);
+      if (dist(last, p) > scr(1.5)) activeDrawing.points.push(p);
     }
     draw();
   }
@@ -2576,19 +1957,6 @@
       return;
     }
 
-    if (a.type === "contourMarker") {
-      if (a.points && a.points.length >= 2 && Math.hypot(a.points[a.points.length - 1].x - a.points[0].x, a.points[a.points.length - 1].y - a.points[0].y) > scr(4)) {
-        contourMarks.push({ id: nextContourMarkId++, points: a.points.map(pt => ({ x: pt.x, y: pt.y })) });
-        setStatus(`Kontur markiert (${contourMarks.length}). Weitere Kanten markieren oder „Vorschläge aus Markierungen“ wählen.`);
-      } else {
-        setStatus("Kontur zu kurz – bitte länger markieren.");
-      }
-      endGesture();
-      setReady(photoLoaded);
-      draw();
-      return;
-    }
-
     // Zu kurze Linien verwerfen
     if ((a.type === "line" || a.type === "measure" || a.type === "reference") && dist({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }) < scr(8)) {
       endGesture(); draw();
@@ -2615,11 +1983,8 @@
     // Referenzlinie benötigt den bekannten echten Wert; normale Linien fragen nur dann nach, wenn kein Maßstab existiert.
     if (newMeasureId !== null) {
       const created = measures.find((m) => m.id === newMeasureId);
-      if (created && (created.isReference || !created.autoCalculated || currentAutoMeasureMode() === "suggestions")) {
-        openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
-      } else {
-        setStatus(`Automatisch berechnet: ${fmt(created.value)}${created.unit || " mm"}. Doppel-Tipp zum manuellen Ändern.`);
-      }
+      if (created && (created.isReference || !created.autoCalculated)) openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
+      else setStatus(`Berechnet: ${fmt(created.value)}${created.unit || " mm"}. Doppel-Tipp zum manuellen Ändern.`);
     }
   }
 
