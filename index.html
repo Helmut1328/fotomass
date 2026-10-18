@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
-  <meta name="theme-color" content="#17212b">
+  <meta name="theme-color" content="#152536">
   <meta name="description" content="FotoMaß – Fotos aufnehmen, Maße eintragen und Skizzen ergänzen.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -67,18 +67,26 @@
       <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden neue Maßlinien berechnet</p>
 
       <div class="toolbox">
-        <div class="tool-grid">
-          <button class="tool active" data-tool="select" type="button">↖ Auswählen</button>
-          <button class="tool" data-tool="measure" type="button">＋ Maß</button>
-          <button class="tool" data-tool="reference" type="button">⚖ Referenz</button>
-          <button class="tool" data-tool="angle" type="button">∠ Winkel</button>
-          <button class="tool" data-tool="freehand" type="button">✎ Frei</button>
-          <button class="tool" data-tool="line" type="button">／ Linie</button>
-          <button class="tool" data-tool="rect" type="button">□ Rect</button>
-          <button class="tool" data-tool="text" type="button">T Text</button>
-          <button class="tool" data-tool="eraser" type="button">⌫ Lösch</button>
+        <div class="tool-grid primary-tools" aria-label="Hauptwerkzeuge">
+          <button class="tool active" data-tool="select" type="button" title="Objekte auswählen und bearbeiten">↖ <span>Auswählen</span></button>
+          <button class="tool" data-tool="measure" type="button" title="Neue Maßlinie zeichnen">＋ <span>Maß</span></button>
+          <button class="tool" data-tool="reference" type="button" title="Bekannte Strecke als Referenz festlegen">⚖ <span>Referenz</span></button>
         </div>
+        <details class="tool-details">
+          <summary>Weitere Zeichenwerkzeuge <span class="summary-hint">Winkel, Freihand, Linie, Rechteck, Text</span></summary>
+          <div class="tool-grid secondary-tools">
+            <button class="tool" data-tool="angle" type="button">∠ <span>Winkel</span></button>
+            <button class="tool" data-tool="freehand" type="button">✎ <span>Freihand</span></button>
+            <button class="tool" data-tool="line" type="button">／ <span>Linie</span></button>
+            <button class="tool" data-tool="rect" type="button">□ <span>Rechteck</span></button>
+            <button class="tool" data-tool="text" type="button">T <span>Text</span></button>
+            <button class="tool" data-tool="eraser" type="button">⌫ <span>Radierer</span></button>
+          </div>
+        </details>
         <div class="button-row" style="margin-top:8px"><button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button></div>
+        <details class="tool-details advanced-details">
+          <summary>Bild einfügen &amp; Zeichenoptionen</summary>
+          <div class="advanced-tools">
         <div class="button-row image-tools">
           <button id="insertImageButton" class="secondary" type="button">🖼 Bild einfügen / zuschneiden</button>
           <input id="insertImageInput" type="file" accept="image/*" hidden>
@@ -104,7 +112,8 @@
             Einrasten
           </label>
         </div>
-      </div>
+          </div>
+        </details>      </div>
 
       <div class="button-row action-row">
         <button id="undo" class="secondary" type="button" disabled>↶ Zurück</button>
