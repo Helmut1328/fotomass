@@ -381,6 +381,45 @@
     return left.slice(0, -1).concat(right);
   }
 
+  // Sucht nahe der Markierung nach der stärksten echten Bildkante.
+  // Der Marker gibt die ungefähre Richtung vor; er wird nicht selbst zur Maßlinie.
+  function snapMarkedSegmentToImageEdge(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 2) return { a, b, strength: 0 };
+    const nx = -dy / len, ny = dx / len;
+    const image = baseCanvas.getContext("2d", { willReadFrequently: true });
+    const w = baseCanvas.width, h = baseCanvas.height;
+    const radius = Math.max(5, Math.min(18, canvas.width * 0.012));
+    const samples = Math.max(7, Math.min(45, Math.round(len / Math.max(8, canvas.width / 45))));
+    const offsets = [];
+    for (let off = -radius; off <= radius; off += 1.5) offsets.push(off);
+    const sampleAt = (x, y) => {
+      const ix = Math.round(x), iy = Math.round(y);
+      if (ix < 1 || iy < 1 || ix >= w - 1 || iy >= h - 1) return 0;
+      const d = image.getImageData(ix - 1, iy - 1, 3, 3).data;
+      const lum = (idx) => 0.299*d[idx] + 0.587*d[idx+1] + 0.114*d[idx+2];
+      const gx = (lum(2)-lum(0)) + 2*(lum(5)-lum(3)) + (lum(8)-lum(6));
+      const gy = (lum(6)-lum(0)) + 2*(lum(7)-lum(1)) + (lum(8)-lum(2));
+      return Math.hypot(gx, gy);
+    };
+    // Sample all pixels once, rather than repeatedly reading the canvas.
+    const pixels = image.getImageData(0, 0, w, h).data;
+    const gradAt = (x, y) => {
+      const ix=Math.round(x), iy=Math.round(y);
+      if(ix<1||iy<1||ix>=w-1||iy>=h-1) return 0;
+      const lum=(xx,yy)=>{const q=(yy*w+xx)*4;return .299*pixels[q]+.587*pixels[q+1]+.114*pixels[q+2];};
+      const gx=lum(ix+1,iy-1)-lum(ix-1,iy-1)+2*(lum(ix+1,iy)-lum(ix-1,iy))+lum(ix+1,iy+1)-lum(ix-1,iy+1);
+      const gy=lum(ix-1,iy+1)-lum(ix-1,iy-1)+2*(lum(ix,iy+1)-lum(ix,iy-1))+lum(ix+1,iy+1)-lum(ix+1,iy-1);
+      return Math.abs(gx*nx + gy*ny);
+    };
+    let bestOff=0,bestScore=-1;
+    for(const off of offsets){let score=0,count=0;for(let i=1;i<samples;i++){const t=i/samples;score+=gradAt(a.x+dx*t+nx*off,a.y+dy*t+ny*off);count++;}score/=Math.max(1,count);if(score>bestScore){bestScore=score;bestOff=off;}}
+    // Nicht einrasten, wenn die Bildkante kaum eindeutiger als die Markierung ist.
+    const shift = bestScore > 24 ? bestOff : 0;
+    return { a:{x:a.x+nx*shift,y:a.y+ny*shift}, b:{x:b.x+nx*shift,y:b.y+ny*shift}, strength:bestScore };
+  }
+
   function suggestionsFromContourMarks() {
     const candidates = [];
     contourMarks.forEach((mark) => {
@@ -389,9 +428,10 @@
         const a = pts[i - 1], b = pts[i];
         const len = Math.hypot(b.x - a.x, b.y - a.y);
         if (len < Math.max(24, canvas.width / 35)) continue;
-        const angle = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+        const snapped = snapMarkedSegmentToImageEdge(a, b);
+        const angle = Math.atan2(snapped.b.y - snapped.a.y, snapped.b.x - snapped.a.x) * 180 / Math.PI;
         const orientation = Math.abs(angle) < 20 || Math.abs(angle) > 160 ? "horizontal" : (Math.abs(angle) > 70 && Math.abs(angle) < 110 ? "vertical" : "diagonal");
-        candidates.push({ id: nextSuggestionId++, x1: a.x, y1: a.y, x2: b.x, y2: b.y, orientation, source: "marker" });
+        candidates.push({ id: nextSuggestionId++, x1: snapped.a.x, y1: snapped.a.y, x2: snapped.b.x, y2: snapped.b.y, orientation, source: "marker", edgeStrength: snapped.strength });
       }
     });
     return candidates;
