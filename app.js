@@ -65,6 +65,9 @@
   let anglePoints = [];
   let measures = [];
   let measureSuggestions = [];
+  // Temporäre Freihand-Konturen: Suchhilfe, keine exportierten Zeichnungen.
+  let contourMarks = [];
+  let nextContourMarkId = 1;
   let selectedSuggestionId = null;
   let nextSuggestionId = 1;
   let analysisRoi = null; // optionaler Suchbereich in Bildkoordinaten
@@ -312,6 +315,7 @@
         g.restore();
       }
     }
+    if (!forExport && contourMarks.length) drawContourMarks(g, k);
     if (!forExport && measureSuggestions.length) drawMeasureSuggestions(g, k);
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
@@ -322,6 +326,7 @@
     }
     if (activeDrawing && !/^(move-|text-place|angle-point)/.test(activeDrawing.type)) {
       if (activeDrawing.type === "measure" || activeDrawing.type === "reference") drawMeasurePreview(g, activeDrawing, k);
+      else if (activeDrawing.type === "contourMarker") drawContourMarks(g, k);
       else drawShape(g, activeDrawing, k);
     }
     if (snapPoint) {
@@ -340,6 +345,58 @@
 
   // Vorschläge bleiben separate Overlay-Objekte und werden nie in den Export eingebrannt,
   // bevor der Nutzer sie einzeln bestätigt.
+  function drawContourMarks(g, k) {
+    g.save();
+    g.lineCap = "round"; g.lineJoin = "round";
+    const paths = contourMarks.slice();
+    if (activeDrawing && activeDrawing.type === "contourMarker" && activeDrawing.points) paths.push(activeDrawing);
+    paths.forEach((mark) => {
+      if (!mark.points || mark.points.length < 2) return;
+      g.beginPath(); g.moveTo(mark.points[0].x, mark.points[0].y);
+      for (let i = 1; i < mark.points.length; i++) g.lineTo(mark.points[i].x, mark.points[i].y);
+      // translucent broad marker stroke remains visible over the photo
+      g.strokeStyle = "rgba(255, 59, 48, 0.42)";
+      g.lineWidth = Math.max(scr(10), 10 * k);
+      g.stroke();
+      g.strokeStyle = "rgba(255, 59, 48, 0.95)";
+      g.lineWidth = Math.max(scr(2), 2 * k);
+      g.stroke();
+    });
+    g.restore();
+  }
+
+  function simplifyContour(points, tolerance) {
+    if (!points || points.length <= 2) return points || [];
+    const first = points[0], last = points[points.length - 1];
+    const dx = last.x - first.x, dy = last.y - first.y;
+    const denom = Math.hypot(dx, dy) || 1;
+    let maxDist = 0, maxIndex = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+      const distLine = Math.abs(dy * points[i].x - dx * points[i].y + last.x * first.y - last.y * first.x) / denom;
+      if (distLine > maxDist) { maxDist = distLine; maxIndex = i; }
+    }
+    if (maxDist <= tolerance) return [first, last];
+    const left = simplifyContour(points.slice(0, maxIndex + 1), tolerance);
+    const right = simplifyContour(points.slice(maxIndex), tolerance);
+    return left.slice(0, -1).concat(right);
+  }
+
+  function suggestionsFromContourMarks() {
+    const candidates = [];
+    contourMarks.forEach((mark) => {
+      const pts = simplifyContour(mark.points, Math.max(5, canvas.width / 180));
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (len < Math.max(24, canvas.width / 35)) continue;
+        const angle = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+        const orientation = Math.abs(angle) < 20 || Math.abs(angle) > 160 ? "horizontal" : (Math.abs(angle) > 70 && Math.abs(angle) < 110 ? "vertical" : "diagonal");
+        candidates.push({ id: nextSuggestionId++, x1: a.x, y1: a.y, x2: b.x, y2: b.y, orientation, source: "marker" });
+      }
+    });
+    return candidates;
+  }
+
   function drawMeasureSuggestions(g, k) {
     g.save();
     measureSuggestions.forEach((s, index) => {
@@ -721,6 +778,22 @@
       setStatus("Die Kantenerkennung konnte dieses Foto nicht analysieren.");
     }
   });
+  const contourSuggestBtn = $("suggestFromContours");
+  if (contourSuggestBtn) contourSuggestBtn.addEventListener("click", () => {
+    if (!photoLoaded || !contourMarks.length) { setStatus("Markiere zuerst mit dem Konturmarker mindestens eine Kante."); return; }
+    const fromMarks = suggestionsFromContourMarks();
+    if (!fromMarks.length) { setStatus("Keine ausreichend langen Linien aus den Markierungen erkannt. Markiere die Kanten in längeren Abschnitten."); return; }
+    // Markierungsbasierte Vorschläge ersetzen nicht automatisch bestehende Vorschläge.
+    measureSuggestions = fromMarks;
+    selectedSuggestionId = measureSuggestions[0].id;
+    renderMeasureSuggestionsList(); draw();
+    setStatus(`${measureSuggestions.length} Vorschläge aus deinen Konturmarkierungen erstellt. Jede Maßlinie einzeln prüfen und übernehmen.`);
+  });
+  const clearMarksBtn = $("clearContourMarks");
+  if (clearMarksBtn) clearMarksBtn.addEventListener("click", () => {
+    contourMarks = []; draw(); setReady(photoLoaded); setStatus("Konturmarkierungen gelöscht.");
+  });
+
   const clearSugBtn = $("clearMeasureSuggestions");
   if (clearSugBtn) clearSugBtn.addEventListener("click", clearAllSuggestions);
   const setRoiBtn = $("setAnalysisRoi");
@@ -1174,7 +1247,7 @@
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
-    measures = []; measureSuggestions = []; selectedSuggestionId = null; analysisRoi = null; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
+    measures = []; measureSuggestions = []; selectedSuggestionId = null; contourMarks = []; analysisRoi = null; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
     activeDrawing = null; updateHistoryButtons();
   }
 
@@ -2200,7 +2273,7 @@
       id: nextId++, type: tool,
       x1: p.x, y1: p.y, x2: p.x, y2: p.y,
       color: colorInput.value, width: Number(widthInput.value),
-      points: tool === "freehand" ? [p] : undefined,
+      points: (tool === "freehand" || tool === "contourMarker") ? [p] : undefined,
       fill: tool === "rect" ? !!(rectFillToggle && rectFillToggle.checked) : false,
       fillOpacity: tool === "rect" && rectFillOpacity ? Number(rectFillOpacity.value) / 100 : 1,
       value: "", unit: unitSelect.value
@@ -2326,9 +2399,9 @@
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
     }
     activeDrawing.x2 = p.x; activeDrawing.y2 = p.y;
-    if (activeDrawing.type === "freehand") {
+    if (activeDrawing.type === "freehand" || activeDrawing.type === "contourMarker") {
       const last = activeDrawing.points[activeDrawing.points.length - 1];
-      if (dist(last, p) > scr(1.5)) activeDrawing.points.push(p);
+      if (dist(last, p) > scr(activeDrawing.type === "contourMarker" ? 2 : 1.5)) activeDrawing.points.push(p);
     }
     draw();
   }
@@ -2395,6 +2468,19 @@
         lastTap = { id: a.id, time: now };
       }
       endGesture(); draw(); renderMeasureList();
+      return;
+    }
+
+    if (a.type === "contourMarker") {
+      if (a.points && a.points.length >= 2 && Math.hypot(a.points[a.points.length - 1].x - a.points[0].x, a.points[a.points.length - 1].y - a.points[0].y) > scr(4)) {
+        contourMarks.push({ id: nextContourMarkId++, points: a.points.map(pt => ({ x: pt.x, y: pt.y })) });
+        setStatus(`Kontur markiert (${contourMarks.length}). Weitere Kanten markieren oder „Vorschläge aus Markierungen“ wählen.`);
+      } else {
+        setStatus("Kontur zu kurz – bitte länger markieren.");
+      }
+      endGesture();
+      setReady(photoLoaded);
+      draw();
       return;
     }
 

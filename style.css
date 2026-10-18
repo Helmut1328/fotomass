@@ -497,3 +497,29 @@ body { padding-top: 0; }
 /* Freihand-Konturmarker für die geführte Maßlinienerkennung */
 .tool[data-tool="contourMarker"] { border-color: #f0b323; }
 .tool[data-tool="contourMarker"].active { background: #fff0bd; color: #553b00; border-color: #d69b00; }
+
+
+/* Kompakte aufklappbare Bereiche für kleine Smartphone-Displays */
+.compact-disclosure { padding: 0; overflow: hidden; }
+.compact-disclosure > summary {
+  list-style: none;
+  min-height: 46px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 750;
+  color: var(--ink);
+  -webkit-tap-highlight-color: transparent;
+}
+.compact-disclosure > summary::-webkit-details-marker { display: none; }
+.compact-disclosure > summary::after { content: "＋"; font-size: 1.15rem; color: var(--muted); }
+.compact-disclosure[open] > summary::after { content: "−"; }
+.compact-disclosure[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.auto-mode-row > :not(summary), .toolbox > :not(summary) { margin-left: 10px; margin-right: 10px; }
+.auto-mode-row > :last-child, .toolbox > .settings-row { margin-bottom: 10px; }
+.tool-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.tool-grid .tool { min-height: 42px; padding: 7px 5px; font-size: .88rem; }
+@media (min-width: 600px) { .tool-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
