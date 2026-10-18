@@ -64,6 +64,8 @@
   let selectedId = null;
   let anglePoints = [];
   let measures = [];
+  let measureSuggestions = [];
+  let nextSuggestionId = 1;
   let drawings = [];
   let selectedDrawingId = null;
   let cropSourceImage = null;
@@ -198,12 +200,14 @@
     buttons.exportProject.disabled = !ready;
     buttons.clear.disabled = !ready;
     buttons.save.disabled = !ready;
+    const detectButton=$("detectMeasureSuggestions"); if(detectButton) detectButton.disabled=!ready;
     updateHistoryButtons();
   }
 
   // Nach jeder Änderung: Liste + Zeichnung neu, Zwischenspeicher planen
   function refresh() {
     renderMeasureList();
+    renderMeasureSuggestionsList();
     draw();
     scheduleAutosave();
   }
@@ -301,6 +305,7 @@
         g.restore();
       }
     }
+    if (!forExport && measureSuggestions.length) drawMeasureSuggestions(g, k);
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
     if (tool === "angle" && anglePoints.length) {
@@ -325,6 +330,117 @@
     }
   }
   function draw() { if (photoLoaded) paint(ctx, false); }
+
+  // Vorschläge bleiben separate Overlay-Objekte und werden nie in den Export eingebrannt,
+  // bevor der Nutzer sie einzeln bestätigt.
+  function drawMeasureSuggestions(g, k) {
+    g.save();
+    measureSuggestions.forEach((s, index) => {
+      g.strokeStyle = s.orientation === "horizontal" ? "#00b8d9" : "#b35cff";
+      g.fillStyle = g.strokeStyle;
+      g.lineWidth = Math.max(2*k, scr(2));
+      g.setLineDash([7*k, 5*k]);
+      g.beginPath(); g.moveTo(s.x1, s.y1); g.lineTo(s.x2, s.y2); g.stroke();
+      g.setLineDash([]);
+      [ [s.x1,s.y1], [s.x2,s.y2] ].forEach(([x,y]) => { g.beginPath(); g.arc(x,y,4*k,0,Math.PI*2); g.fill(); });
+      const label = `V${index+1}`;
+      g.font = `bold ${Math.max(12*k, scr(12))}px system-ui, sans-serif`;
+      const tx=(s.x1+s.x2)/2, ty=(s.y1+s.y2)/2;
+      g.fillStyle = "rgba(20,30,40,.82)"; g.fillRect(tx-12*k,ty-18*k,24*k,16*k);
+      g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.fillText(label,tx,ty-10*k);
+    });
+    g.restore();
+  }
+
+  function detectImageEdgeSuggestions() {
+    if (!photoLoaded) return [];
+    const w=baseCanvas.width, h=baseCanvas.height;
+    const image=baseCanvas.getContext("2d", {willReadFrequently:true}).getImageData(0,0,w,h);
+    const px=image.data;
+    const lum=(x,y)=>{ const i=(y*w+x)*4; return 0.299*px[i]+0.587*px[i+1]+0.114*px[i+2]; };
+    const step=3, threshold=24;
+    const found=[];
+    function scanHorizontal(y) {
+      let start=-1, score=0, count=0;
+      for(let x=2;x<w-2;x+=step) {
+        const strength=Math.abs(lum(x,y-1)-lum(x,y+1));
+        if(strength>=threshold) { if(start<0) {start=x;score=0;count=0;} score+=strength;count++; }
+        else if(start>=0) { if(x-start>=Math.max(65,w*0.10)&&count>=8) found.push({orientation:"horizontal",x1:start,y1:y,x2:Math.min(w-1,x-step),y2:y,score:score/count*count}); start=-1; }
+      }
+      if(start>=0&&w-2-start>=Math.max(65,w*0.10)&&count>=8) found.push({orientation:"horizontal",x1:start,y1:y,x2:w-2,y2:y,score:score/count*count});
+    }
+    function scanVertical(x) {
+      let start=-1, score=0, count=0;
+      for(let y=2;y<h-2;y+=step) {
+        const strength=Math.abs(lum(x-1,y)-lum(x+1,y));
+        if(strength>=threshold) { if(start<0) {start=y;score=0;count=0;} score+=strength;count++; }
+        else if(start>=0) { if(y-start>=Math.max(65,h*0.10)&&count>=8) found.push({orientation:"vertical",x1:x,y1:start,x2:x,y2:Math.min(h-1,y-step),score:score/count*count}); start=-1; }
+      }
+      if(start>=0&&h-2-start>=Math.max(65,h*0.10)&&count>=8) found.push({orientation:"vertical",x1:x,y1:start,x2:x,y2:h-2,score:score/count*count});
+    }
+    for(let y=3;y<h-3;y+=3) scanHorizontal(y);
+    for(let x=3;x<w-3;x+=3) scanVertical(x);
+    found.sort((a,b)=>b.score-a.score);
+    const chosen=[];
+    for(const c of found) {
+      const same=chosen.some(o=>o.orientation===c.orientation && Math.abs((c.orientation==="horizontal"?o.y1:o.x1)-(c.orientation==="horizontal"?c.y1:c.x1))<Math.max(10,Math.min(w,h)*0.012) && overlapRatio(o,c)>0.45);
+      if(!same) chosen.push(c);
+      if(chosen.length>=14) break;
+    }
+    return chosen.map(c=>({...c,id:nextSuggestionId++}));
+  }
+  function overlapRatio(a,b) {
+    const horizontal=a.orientation==="horizontal";
+    const a1=horizontal?a.x1:a.y1, a2=horizontal?a.x2:a.y2;
+    const b1=horizontal?b.x1:b.y1, b2=horizontal?b.x2:b.y2;
+    const overlap=Math.max(0,Math.min(a2,b2)-Math.max(a1,b1));
+    return overlap/Math.max(1,Math.min(a2-a1,b2-b1));
+  }
+  function renderMeasureSuggestionsList() {
+    const list=$("measureSuggestionsList"), count=$("suggestionCount");
+    if(!list) return;
+    list.replaceChildren();
+    if(count) count.textContent=`${measureSuggestions.length} offen`;
+    if(!measureSuggestions.length) {
+      const p=document.createElement("p"); p.className="empty-list"; p.textContent="Noch keine Vorschläge. Tippe auf „Mögliche Maßlinien suchen“."; list.append(p); return;
+    }
+    measureSuggestions.forEach((s,i)=>{
+      const row=document.createElement("div"); row.className="suggestion-item";
+      const info=document.createElement("div"); info.className="suggestion-info";
+      const title=document.createElement("strong"); title.textContent=`Vorschlag ${i+1} · ${s.orientation==="horizontal"?"waagerecht":"senkrecht"}`;
+      const detail=document.createElement("small"); detail.textContent=`ca. ${Math.round(Math.hypot(s.x2-s.x1,s.y2-s.y1))} Bildpixel · bitte im Foto prüfen`;
+      info.append(title,detail);
+      const accept=document.createElement("button"); accept.type="button"; accept.className="suggestion-accept"; accept.textContent="Übernehmen";
+      accept.addEventListener("click",()=>acceptMeasureSuggestion(s.id));
+      const dismiss=document.createElement("button"); dismiss.type="button"; dismiss.className="secondary suggestion-dismiss"; dismiss.textContent="Verwerfen";
+      dismiss.addEventListener("click",()=>{measureSuggestions=measureSuggestions.filter(x=>x.id!==s.id);renderMeasureSuggestionsList();draw();});
+      row.append(info,accept,dismiss); list.append(row);
+    });
+  }
+  function acceptMeasureSuggestion(id) {
+    const s=measureSuggestions.find(x=>x.id===id); if(!s) return;
+    const before=snapshot();
+    const m={id:nextId++,type:"linear",isReference:false,x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2,value:"",unit:unitSelect.value,color:colorInput.value,textBg:$("textBgToggle").checked,autoCalculated:false};
+    const value=calculatedValueFor(m,m.unit);
+    if(value!==null) {m.value=value;m.autoCalculated=true;}
+    pushHistory(before); measures.push(m); selectedId=m.id;
+    measureSuggestions=measureSuggestions.filter(x=>x.id!==id);
+    refresh(); renderMeasureSuggestionsList();
+    setTool("select");
+    if(!m.autoCalculated) openValueDialog(m.id,{isNew:true});
+    else setStatus(`Vorschlag übernommen: ${fmt(m.value)}${m.unit||" mm"}. Bitte Maßstab und Kante kontrollieren.`);
+  }
+  $("detectMeasureSuggestions").addEventListener("click",()=>{
+    if(!photoLoaded) return;
+    try {
+      measureSuggestions=detectImageEdgeSuggestions();
+      renderMeasureSuggestionsList(); draw();
+      setStatus(measureSuggestions.length ? `${measureSuggestions.length} mögliche Kanten gefunden. Prüfe jede Linie und übernimm nur passende Vorschläge.` : "Keine ausreichend deutlichen Kanten gefunden. Probiere ein schärferes, kontrastreicheres Foto.");
+    } catch(err) {
+      console.error("Kantenerkennung fehlgeschlagen",err);
+      setStatus("Die Kantenerkennung konnte dieses Foto nicht analysieren.");
+    }
+  });
 
   function drawMeasurePreview(g, d, k) {
     g.save();
@@ -728,7 +844,7 @@
     if (!autoMeasureModeHint) return;
     autoMeasureModeHint.textContent = currentAutoMeasureMode() === "maximum"
       ? "Maximale Automatik: Neue Maßlinien werden mit vorhandenem Referenzmaß direkt berechnet. Die Bildkanten selbst werden nicht automatisch erkannt."
-      : "Vorschläge prüfen: Neue Maßlinienwerte werden berechnet und zur Kontrolle geöffnet. Du kannst sie übernehmen oder ändern.";
+      : "Vorschlagsmodus: Bildkanten suchen, Vorschläge im Foto und in der Liste prüfen und jede Maßlinie einzeln übernehmen.";
   }
   try { if (autoMeasureMode) autoMeasureMode.value = localStorage.getItem("fm-auto-measure-mode") === "maximum" ? "maximum" : "suggestions"; } catch (_) {}
   if (autoMeasureMode) {
@@ -751,7 +867,7 @@
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
-    measures = []; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
+    measures = []; measureSuggestions = []; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
     activeDrawing = null; updateHistoryButtons();
   }
 
@@ -846,7 +962,7 @@
         $("projectName").value = p.projectName;
         $("photoStatus").textContent = p.projectName || "Projekt geöffnet";
         unitSelect.value = p.unit; snapToggle.checked = p.snap; fontSizeInput.value = p.fontSize;
-        renderMeasureList(); draw(); setReady(true);
+        renderMeasureList(); renderMeasureSuggestionsList(); draw(); setReady(true);
         setSaveState("saved");
         resolve();
       };
@@ -878,7 +994,7 @@
     canvas.style.display = "none";
     emptyState.hidden = false; emptyState.classList.remove("is-hidden"); emptyState.style.display = "";
     $("projectName").value = ""; $("photoStatus").textContent = "Noch kein Foto";
-    renderMeasureList(); setReady(false); setSaveState("idle");
+    renderMeasureList(); renderMeasureSuggestionsList(); setReady(false); setSaveState("idle");
   }
 
   // --- Neues Foto = neues Projekt (das bisherige bleibt in der Projektliste erhalten) ---
@@ -901,7 +1017,7 @@
       photoData = baseCanvas.toDataURL("image/jpeg", 0.9);
       $("photoStatus").textContent = file.name || "Foto geladen";
       originalBlob = file;
-      renderMeasureList(); draw(); setReady(true);
+      renderMeasureList(); renderMeasureSuggestionsList(); draw(); setReady(true);
       setStatus("Neues Projekt angelegt. Maßlinie ziehen – danach öffnet sich das Wert-Feld.");
       await storeOriginal(file);
       rev++;

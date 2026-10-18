@@ -1,7 +1,15 @@
-FotoMaß – Modus C
+FotoMaß – Modus C mit Kantenvorschlägen
 
-Enthalten: umschaltbarer Modus „Vorschläge prüfen“ / „Maximale Automatik“. Die Auswahl wird lokal gespeichert. Beide Modi nutzen den vorhandenen Referenzmaßstab, um gezeichnete Maßlinien zu berechnen. Im Vorschlagsmodus öffnet sich der Wert zur Prüfung; in der maximalen Automatik wird ein berechneter Wert direkt übernommen.
+Enthalten sind die bestehenden FotoMaß-Dateien sowie die Erweiterung für manuell bestätigbare Maßlinienvorschläge.
 
-Wichtige Grenze: Diese Änderung implementiert keine automatische Computer-Vision-Erkennung von Fotoecken oder Kanten. „Maximale Automatik“ automatisiert die Berechnung für gezeichnete Maßlinien anhand des Referenzmaßes, nicht das Erkennen und Zeichnen der Linien aus dem Foto. Bestehende Funktionen wurden beibehalten.
+Bedienung:
+1. Foto laden.
+2. „Mögliche Maßlinien suchen“ drücken.
+3. Die gestrichelten Linien im Foto und die Vorschläge in der Liste prüfen.
+4. Passende Vorschläge einzeln mit „Übernehmen“ bestätigen; unpassende mit „Verwerfen“ entfernen.
+5. Bei vorhandener Referenz wird ein Wert berechnet. Ohne Referenz fragt FotoMaß den Wert ab.
 
-Dateien wie gewohnt gemeinsam hochladen; Dateinamen index.html, app.js, style.css, style_patch.css, storage.js, speech.js, service-worker.js, manifest.json, apple-touch-icon.png und icon-512.png beibehalten.
+Technischer Hinweis:
+Die Erkennung ist eine einfache lokale Bildverarbeitung für deutliche horizontale und vertikale Kontrastkanten. Sie ist keine KI und erkennt nicht zuverlässig, welche Kante tatsächlich ein Werkstückmaß darstellt. Alle Vorschläge bleiben bis zur manuellen Übernahme unverbindlich. Vorschlagslinien werden nicht exportiert, solange sie nicht übernommen wurden.
+
+Die bisherige Maßlinien-, Referenzmaß-, Zeichen-, Speicher- und Exportfunktion bleibt Bestandteil des Pakets. Nach Austausch der Dateien kann bei einer installierten PWA ein Neuladen nötig sein, damit der neue Service-Worker geladen wird.

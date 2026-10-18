@@ -72,7 +72,9 @@
             <option value="maximum">Modus C: Maximale Automatik</option>
           </select>
         </label>
-        <p id="autoMeasureModeHint" class="hint">Berechnete Werte werden als Vorschlag geöffnet und können vor dem Übernehmen geprüft oder geändert werden.</p>
+        <p id="autoMeasureModeHint" class="hint">Vorschläge werden im Foto markiert. Jede Maßlinie muss einzeln übernommen werden.</p>
+        <button id="detectMeasureSuggestions" class="secondary" type="button" disabled>⌕ Mögliche Maßlinien suchen</button>
+        <p class="hint">Die Erkennung sucht nach deutlichen waagerechten und senkrechten Bildkanten. Sie ist eine Hilfe, keine sichere Werkstückerkennung.</p>
       </div>
 
       <div class="toolbox">
@@ -133,6 +135,10 @@
       </div>
       <div id="measureList" class="measure-list">
         <p class="empty-list">Noch keine Maßlinien.</p>
+      </div>
+      <div class="suggestions-panel">
+        <div class="section-heading"><h3>Maßlinienvorschläge</h3><span id="suggestionCount" class="hint">0 offen</span></div>
+        <div id="measureSuggestionsList" class="measure-suggestions-list"><p class="empty-list">Noch keine Vorschläge. Tippe auf „Mögliche Maßlinien suchen“.</p></div>
       </div>
     </section>
 

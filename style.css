@@ -476,3 +476,17 @@ body { padding-top: 0; }
 .auto-mode-row label { display: grid; gap: 6px; font-size: .95rem; }
 .auto-mode-row select { width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); color: var(--ink); font: inherit; }
 .auto-mode-row p { margin: 0; }
+
+
+/* Modus C – erkannte Kanten als manuell bestätigbare Vorschläge */
+.auto-mode-row #detectMeasureSuggestions { width: 100%; min-height: 42px; }
+.suggestions-panel { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.suggestions-panel h3 { margin: 0; font-size: 1rem; }
+.measure-suggestions-list { display: grid; gap: 8px; }
+.suggestion-item { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 7px; padding: 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+.suggestion-info { min-width: 0; font-size: .9rem; }
+.suggestion-info strong { display: block; }
+.suggestion-info small { color: var(--muted); }
+.suggestion-item button { min-height: 38px; padding: 6px 9px; }
+.suggestion-accept { background: #16794b; color: #fff; border-color: #16794b; }
+@media (max-width: 420px) { .suggestion-item { grid-template-columns: minmax(0,1fr) auto; } .suggestion-item .suggestion-dismiss { grid-column: 2; } }
