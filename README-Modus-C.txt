@@ -1,22 +1,28 @@
 FotoMaß – Modus C mit verbesserter Kantenerkennung
 
-Enthalten sind die bestehenden FotoMaß-Dateien sowie die Erweiterung für manuell bestätigbare Maßlinienvorschläge.
-
 Bedienung:
 1. Foto laden.
-2. „Mögliche Maßlinien suchen“ drücken.
-3. Die gestrichelten Linien im Foto und die Vorschläge in der Liste prüfen.
-4. Passende Vorschläge einzeln mit „Übernehmen“ bestätigen; unpassende mit „Verwerfen“ entfernen.
-5. Bei vorhandener Referenz wird ein Wert berechnet. Ohne Referenz fragt FotoMaß den Wert ab.
+2. Optional: Mit dem Rechteck-Werkzeug einen Rahmen um das Werkstück ziehen, auswählen und „Suchbereich setzen“.
+3. „Mögliche Maßlinien suchen“ drücken.
+4. Gestrichelte Linien im Foto und die Liste prüfen. Einen Vorschlag antippen, um ihn hervorzuheben.
+5. Passende Vorschläge mit „Übernehmen“ bestätigen; unpassende mit „Verwerfen“ oder „Vorschläge verwerfen“ entfernen.
+6. Bei vorhandener Referenz wird ein Wert berechnet. Ohne Referenz fragt FotoMaß den Wert ab.
 
-Verbesserung der Erkennung:
-- Das Foto wird für die Analyse auf maximal 850 Pixel Kantenlänge verkleinert, um die Verarbeitung auf Smartphones zu begrenzen.
-- Ein Sobel-Gradient erkennt Helligkeitsübergänge in beliebiger Richtung.
-- Eine richtungsbasierte Hough-Auswertung berücksichtigt waagerechte, senkrechte und schräge Linien.
-- Kantenpunkte werden zu Segmenten gruppiert; kleine Lücken werden toleriert und nahezu doppelte Linien gefiltert.
+Was an der Erkennung geändert wurde:
+- Hauptursache der schwachen Ergebnisse: Hough-Stimmen nur im exakten Gradienten-Winkel → bei realen Fotos streuten die Stimmen. Jetzt stimmen Kantenpunkte mit Winkel-Toleranz (± ca. 10°) ab.
+- Leichte 3×3-Glättung vor dem Sobel-Filter (weniger Maserungsrauschen).
+- Robustere Nichtmaximum-Unterdrückung und etwas milderer adaptiver Schwellenwert für weiche Möbelkanten.
+- Größere Lücken-Toleranz beim Bilden von Segmenten (unterbrochene Kanten).
+- Scoring nach Länge, Kontinuität und Stärke; leichte Bevorzugung waagerechter/senkrechter Kanten, schräge bleiben möglich.
+- Optionaler Suchbereich (ROI), damit unruhiger Hintergrund weniger stört.
 - Vorschläge bleiben unverbindlich und werden nicht exportiert, solange sie nicht manuell übernommen wurden.
 
 Grenzen:
-Die lokale, regelbasierte Bildverarbeitung versteht nicht semantisch, welches Objekt ein Schrank oder Werkstück ist. Schatten, Maserung, Fugen und Hintergrund können weiterhin Vorschläge erzeugen; schwache oder verdeckte Kanten können fehlen. Bei Fotos mit starker Perspektive oder geringer Schärfe ist die Erkennung eingeschränkt. Alle Vorschläge deshalb prüfen.
+Lokale Bildverarbeitung versteht nicht semantisch „Schrank“ oder „Werkstück“. Schatten, starke Maserung und perspektivische Verzerrung können weiterhin falsche oder fehlende Vorschläge erzeugen. Alle Vorschläge prüfen.
 
-Die bisherige Maßlinien-, Referenzmaß-, Zeichen-, Speicher- und Exportfunktion bleibt Bestandteil des Pakets. Nach Austausch der Dateien kann bei einer installierten PWA ein Neuladen nötig sein, damit der neue Service-Worker geladen wird.
+Service Worker: Cache-Version fotomass-v20. Nach dem Hochladen die App einmal mit Netzwerk neu öffnen bzw. den Browser-Cache leeren, damit der neue Code geladen wird.
+
+Die bisherigen Maßlinien-, Referenz-, Zeichen-, Speicher- und Exportfunktionen bleiben erhalten.
+
+
+NEU in dieser Version: Freihand-Konturmarker. Wähle „Konturmarker“, fahre wichtige Kanten mit dem Finger nach und tippe anschließend auf „Vorschläge aus Markierungen“. Die markierten Striche werden in gerade Segmente zerlegt und als unverbindliche Vorschläge in Foto und Liste angezeigt. Jede Maßlinie muss weiterhin einzeln übernommen werden. Markierungen sind eine temporäre Suchhilfe und werden nicht in das exportierte Foto eingebrannt. Die Funktion richtet die Markierung nicht automatisch auf eine erkannte Bildkante aus; sie macht deine markierte Kontur zunächst zu einem kontrollierbaren Linienvorschlag.

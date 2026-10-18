@@ -490,3 +490,10 @@ body { padding-top: 0; }
 .suggestion-item button { min-height: 38px; padding: 6px 9px; }
 .suggestion-accept { background: #16794b; color: #fff; border-color: #16794b; }
 @media (max-width: 420px) { .suggestion-item { grid-template-columns: minmax(0,1fr) auto; } .suggestion-item .suggestion-dismiss { grid-column: 2; } }
+
+.suggestion-item.selected { outline: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+.suggestion-item { cursor: pointer; }
+
+/* Freihand-Konturmarker für die geführte Maßlinienerkennung */
+.tool[data-tool="contourMarker"] { border-color: #f0b323; }
+.tool[data-tool="contourMarker"].active { background: #fff0bd; color: #553b00; border-color: #d69b00; }

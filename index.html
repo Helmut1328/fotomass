@@ -74,7 +74,13 @@
         </label>
         <p id="autoMeasureModeHint" class="hint">Vorschläge werden im Foto markiert. Jede Maßlinie muss einzeln übernommen werden.</p>
         <button id="detectMeasureSuggestions" class="secondary" type="button" disabled>⌕ Mögliche Maßlinien suchen</button>
-        <p class="hint">Die Erkennung sucht nach deutlichen waagerechten und senkrechten Bildkanten. Sie ist eine Hilfe, keine sichere Werkstückerkennung.</p>
+        <div class="button-row" style="margin-top:6px;gap:6px"><button id="suggestFromContours" class="secondary" type="button" disabled>↳ Vorschläge aus Markierungen</button><button id="clearContourMarks" class="secondary compact" type="button" disabled>Markierungen löschen</button></div>
+        <div class="button-row" style="margin-top:6px;gap:6px">
+          <button id="setAnalysisRoi" class="secondary compact" type="button" disabled>▭ Suchbereich setzen</button>
+          <button id="clearAnalysisRoi" class="secondary compact" type="button" disabled>Bereich lösen</button>
+          <button id="clearMeasureSuggestions" class="secondary compact" type="button" disabled>Vorschläge verwerfen</button>
+        </div>
+        <p class="hint">Optional: Rechteck-Werkzeug nutzen, Rahmen um das Werkstück ziehen, dann „Suchbereich setzen“. Tipp: Mit „Konturmarker“ wichtige Kanten freihändig markieren. Danach „Vorschläge aus Markierungen“ wählen. Jede Maßlinie bleibt unverbindlich und muss einzeln übernommen werden.</p>
       </div>
 
       <div class="toolbox">
@@ -84,6 +90,7 @@
           <button class="tool" data-tool="reference" type="button">⚖ Referenz</button>
           <button class="tool" data-tool="angle" type="button">∠ Winkel</button>
           <button class="tool" data-tool="freehand" type="button">✎ Frei</button>
+          <button class="tool" data-tool="contourMarker" type="button">🖍 Konturmarker</button>
           <button class="tool" data-tool="line" type="button">／ Linie</button>
           <button class="tool" data-tool="rect" type="button">□ Rect</button>
           <button class="tool" data-tool="text" type="button">T Text</button>

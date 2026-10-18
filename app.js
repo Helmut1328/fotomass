@@ -65,7 +65,9 @@
   let anglePoints = [];
   let measures = [];
   let measureSuggestions = [];
+  let selectedSuggestionId = null;
   let nextSuggestionId = 1;
+  let analysisRoi = null; // optionaler Suchbereich in Bildkoordinaten
   let drawings = [];
   let selectedDrawingId = null;
   let cropSourceImage = null;
@@ -200,7 +202,12 @@
     buttons.exportProject.disabled = !ready;
     buttons.clear.disabled = !ready;
     buttons.save.disabled = !ready;
-    const detectButton=$("detectMeasureSuggestions"); if(detectButton) detectButton.disabled=!ready;
+    const detectButton = $("detectMeasureSuggestions"); if (detectButton) detectButton.disabled = !ready;
+    const setRoi = $("setAnalysisRoi"); if (setRoi) setRoi.disabled = !ready;
+    const clearRoi = $("clearAnalysisRoi"); if (clearRoi) clearRoi.disabled = !ready || !analysisRoi;
+    const clearSug = $("clearMeasureSuggestions"); if (clearSug) clearSug.disabled = !ready;
+    const contourBtn = $("suggestFromContours"); if (contourBtn) contourBtn.disabled = !ready || !contourMarks.length;
+    const clearMarks = $("clearContourMarks"); if (clearMarks) clearMarks.disabled = !ready || !contourMarks.length;
     updateHistoryButtons();
   }
 
@@ -336,219 +343,411 @@
   function drawMeasureSuggestions(g, k) {
     g.save();
     measureSuggestions.forEach((s, index) => {
-      g.strokeStyle = s.orientation === "horizontal" ? "#00b8d9" : (s.orientation === "vertical" ? "#b35cff" : "#ff9f1c");
+      const selected = s.id === selectedSuggestionId;
+      const base = s.orientation === "horizontal" ? "#00b8d9" : (s.orientation === "vertical" ? "#b35cff" : "#ff9f1c");
+      g.strokeStyle = selected ? "#ffeb3b" : base;
       g.fillStyle = g.strokeStyle;
-      g.lineWidth = Math.max(2*k, scr(2));
-      g.setLineDash([7*k, 5*k]);
+      g.lineWidth = Math.max((selected ? 3.5 : 2) * k, scr(selected ? 3 : 2));
+      g.setLineDash(selected ? [] : [7 * k, 5 * k]);
       g.beginPath(); g.moveTo(s.x1, s.y1); g.lineTo(s.x2, s.y2); g.stroke();
       g.setLineDash([]);
-      [ [s.x1,s.y1], [s.x2,s.y2] ].forEach(([x,y]) => { g.beginPath(); g.arc(x,y,4*k,0,Math.PI*2); g.fill(); });
-      const label = `V${index+1}`;
-      g.font = `bold ${Math.max(12*k, scr(12))}px system-ui, sans-serif`;
-      const tx=(s.x1+s.x2)/2, ty=(s.y1+s.y2)/2;
-      g.fillStyle = "rgba(20,30,40,.82)"; g.fillRect(tx-12*k,ty-18*k,24*k,16*k);
-      g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.fillText(label,tx,ty-10*k);
+      const r = (selected ? 6 : 4) * k;
+      [[s.x1, s.y1], [s.x2, s.y2]].forEach(([x, y]) => {
+        g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+        if (selected) { g.strokeStyle = "#17212b"; g.lineWidth = Math.max(1.5 * k, scr(1.5)); g.stroke(); g.strokeStyle = g.fillStyle; }
+      });
+      const label = `V${index + 1}`;
+      g.font = `bold ${Math.max(12 * k, scr(12))}px system-ui, sans-serif`;
+      const tx = (s.x1 + s.x2) / 2, ty = (s.y1 + s.y2) / 2;
+      g.fillStyle = selected ? "rgba(255,235,59,.95)" : "rgba(20,30,40,.82)";
+      g.fillRect(tx - 12 * k, ty - 18 * k, 24 * k, 16 * k);
+      g.fillStyle = selected ? "#17212b" : "#fff";
+      g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(label, tx, ty - 10 * k);
     });
+    // optionalen Suchbereich andeuten
+    if (analysisRoi) {
+      g.strokeStyle = "rgba(255,200,40,.85)";
+      g.lineWidth = Math.max(2 * k, scr(2));
+      g.setLineDash([6 * k, 4 * k]);
+      const r = analysisRoi;
+      g.strokeRect(Math.min(r.x1, r.x2), Math.min(r.y1, r.y2), Math.abs(r.x2 - r.x1), Math.abs(r.y2 - r.y1));
+      g.setLineDash([]);
+    }
     g.restore();
   }
 
-  // Robustere lokale Kantenerkennung:
-  // 1) Bild für die Analyse verkleinern, damit sie auch auf dem Smartphone flott bleibt.
-  // 2) Sobel-Gradienten erfassen auch schwächere und schräge Kanten.
-  // 3) Ein richtungsbasierter Hough-Ansatz sammelt Kantenpunkte zu Linien.
-  // 4) Unterbrechungen werden beim Bilden der Liniensegmente toleriert.
-  // Die Ergebnisse bleiben Vorschläge; sie werden nie automatisch zu Maßlinien.
-  function detectImageEdgeSuggestions() {
+  // Verbesserte lokale Kantenerkennung (Modus C):
+  // Ursache der bisherigen schwachen Ergebnisse: Hough-Stimmen nur im exakten
+  // Gradienten-Winkel-Bin → bei realen Smartphone-Fotos mit Winkelrauschen
+  // streuen die Stimmen und wichtige Kanten bilden keinen Peak.
+  // Änderungen: leichte Glättung, Winkel-Toleranz beim Voting, robustere
+  // Segmentbildung mit größeren Lücken, Scoring nach Länge/Kontinuität/Stärke.
+  // Ergebnisse bleiben unverbindliche Vorschläge.
+  function detectImageEdgeSuggestions(roi) {
     if (!photoLoaded) return [];
-    const sourceW=baseCanvas.width, sourceH=baseCanvas.height;
-    const maxAnalysisSide=850;
-    const scale=Math.min(1,maxAnalysisSide/Math.max(sourceW,sourceH));
-    const aw=Math.max(3,Math.round(sourceW*scale));
-    const ah=Math.max(3,Math.round(sourceH*scale));
-    const analysisCanvas=document.createElement('canvas');
-    analysisCanvas.width=aw; analysisCanvas.height=ah;
-    const ag=analysisCanvas.getContext('2d',{willReadFrequently:true});
-    ag.drawImage(baseCanvas,0,0,aw,ah);
-    const data=ag.getImageData(0,0,aw,ah).data;
-    const size=aw*ah;
-    const gray=new Float32Array(size);
-    for(let i=0,j=0;i<size;i++,j+=4) gray[i]=0.299*data[j]+0.587*data[j+1]+0.114*data[j+2];
-
-    const magnitude=new Float32Array(size);
-    const angle=new Float32Array(size);
-    const histogram=new Uint32Array(256);
-    let eligible=0;
-    for(let y=1;y<ah-1;y++) {
-      const row=y*aw;
-      for(let x=1;x<aw-1;x++) {
-        const i=row+x;
-        const gx=-gray[i-aw-1]+gray[i-aw+1]-2*gray[i-1]+2*gray[i+1]-gray[i+aw-1]+gray[i+aw+1];
-        const gy=-gray[i-aw-1]-2*gray[i-aw]-gray[i-aw+1]+gray[i+aw-1]+2*gray[i+aw]+gray[i+aw+1];
-        const mag=Math.hypot(gx,gy);
-        magnitude[i]=mag;
-        if(mag>=12) { histogram[Math.min(255,Math.floor(mag/6))]++; eligible++; }
-        let a=Math.atan2(gy,gx);
-        if(a<0) a+=Math.PI;
-        if(a>=Math.PI) a-=Math.PI;
-        angle[i]=a;
-      }
+    const sourceW = baseCanvas.width, sourceH = baseCanvas.height;
+    const maxAnalysisSide = 900;
+    const scale = Math.min(1, maxAnalysisSide / Math.max(sourceW, sourceH));
+    const aw = Math.max(3, Math.round(sourceW * scale));
+    const ah = Math.max(3, Math.round(sourceH * scale));
+    const analysisCanvas = document.createElement("canvas");
+    analysisCanvas.width = aw; analysisCanvas.height = ah;
+    const ag = analysisCanvas.getContext("2d", { willReadFrequently: true });
+    ag.drawImage(baseCanvas, 0, 0, aw, ah);
+    const data = ag.getImageData(0, 0, aw, ah).data;
+    const size = aw * ah;
+    const gray0 = new Float32Array(size);
+    for (let i = 0, j = 0; i < size; i++, j += 4) {
+      gray0[i] = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
     }
-    if(eligible<30) return [];
-    // Adaptiver Schwellenwert: bei kontrastreichen/texturierten Bildern steigt er,
-    // schwache Kanten werden aber nicht durch einen starren hohen Grenzwert verworfen.
-    const target=Math.floor(eligible*0.55);
-    let cumulative=0, quantile=4;
-    for(let b=2;b<histogram.length;b++) { cumulative+=histogram[b]; if(cumulative>=target) {quantile=b;break;} }
-    const threshold=Math.max(18,Math.min(62,quantile*6*0.72));
-
-    const edgeX=new Int16Array(size), edgeY=new Int16Array(size);
-    const edgeMag=new Float32Array(size), edgeAngle=new Float32Array(size);
-    let edgeCount=0;
-    for(let y=2;y<ah-2;y++) {
-      const row=y*aw;
-      for(let x=2;x<aw-2;x++) {
-        const i=row+x, mag=magnitude[i];
-        if(mag<threshold) continue;
-        // Einfache Nichtmaximum-Unterdrückung entlang der Gradientenrichtung:
-        // hält Kanten schmal und reduziert doppelte Treffer auf breiten Übergängen.
-        const a=angle[i], dx=Math.cos(a), dy=Math.sin(a);
-        const xStep=Math.round(dx), yStep=Math.round(dy);
-        if(mag<magnitude[(y-yStep)*aw+(x-xStep)] || mag<magnitude[(y+yStep)*aw+(x+xStep)]) continue;
-        edgeX[edgeCount]=x; edgeY[edgeCount]=y; edgeMag[edgeCount]=mag; edgeAngle[edgeCount]=a; edgeCount++;
-      }
-    }
-    if(edgeCount<20) return [];
-
-    const thetaBins=36; // 5-Grad-Schritte, daher auch schräge Kanten
-    const diagonal=Math.ceil(Math.hypot(aw,ah));
-    const rhoCount=diagonal*2+1;
-    const accumulator=new Uint32Array(thetaBins*rhoCount);
-    const cosT=new Float32Array(thetaBins), sinT=new Float32Array(thetaBins);
-    for(let t=0;t<thetaBins;t++) { const a=t*Math.PI/thetaBins; cosT[t]=Math.cos(a); sinT[t]=Math.sin(a); }
-    for(let i=0;i<edgeCount;i++) {
-      let t=Math.round(edgeAngle[i]*thetaBins/Math.PI)%thetaBins;
-      const rho=Math.round(edgeX[i]*cosT[t]+edgeY[i]*sinT[t])+diagonal;
-      if(rho>=0&&rho<rhoCount) accumulator[t*rhoCount+rho]++;
-    }
-    const minVotes=Math.max(14,Math.round(Math.min(aw,ah)*0.025));
-    const peaks=[];
-    for(let t=0;t<thetaBins;t++) {
-      const off=t*rhoCount;
-      for(let r=2;r<rhoCount-2;r++) {
-        const votes=accumulator[off+r];
-        if(votes<minVotes) continue;
-        let isMax=true;
-        for(let dr=-2;dr<=2&&isMax;dr++) if(dr!==0&&accumulator[off+r+dr]>votes) isMax=false;
-        if(isMax) peaks.push({t,rho:r-diagonal,votes});
-      }
-    }
-    peaks.sort((a,b)=>b.votes-a.votes);
-    const candidates=[];
-    const maxPeaks=Math.min(70,peaks.length);
-    const minSegmentLength=Math.max(28,Math.min(aw,ah)*0.045);
-    for(let pi=0;pi<maxPeaks;pi++) {
-      const peak=peaks[pi], theta=peak.t*Math.PI/thetaBins;
-      const ct=cosT[peak.t], st=sinT[peak.t], points=[];
-      for(let i=0;i<edgeCount;i++) {
-        let da=Math.abs(edgeAngle[i]-theta); da=Math.min(da,Math.PI-da);
-        if(da>Math.PI*12/180) continue;
-        const distance=Math.abs(edgeX[i]*ct+edgeY[i]*st-peak.rho);
-        if(distance>2.0) continue;
-        points.push({t:-edgeX[i]*st+edgeY[i]*ct,x:edgeX[i],y:edgeY[i],mag:edgeMag[i]});
-      }
-      if(points.length<minVotes) continue;
-      points.sort((a,b)=>a.t-b.t);
-      let group=[], groupStart=null;
-      const flush=()=>{
-        if(group.length<minVotes) {group=[];groupStart=null;return;}
-        const first=group[0], last=group[group.length-1], length=last.t-first.t;
-        if(length>=minSegmentLength && group.length/Math.max(1,length)>=0.07) {
-          const x1=peak.rho*ct+first.t*(-st), y1=peak.rho*st+first.t*ct;
-          const x2=peak.rho*ct+last.t*(-st), y2=peak.rho*st+last.t*ct;
-          const mx=(x1+x2)/2, my=(y1+y2)/2;
-          const lineAngle=(Math.atan2(y2-y1,x2-x1)+Math.PI*2)%Math.PI;
-          const deg=lineAngle*180/Math.PI;
-          const orientation=(deg<12||deg>168)?'horizontal':(Math.abs(deg-90)<12?'vertical':'diagonal');
-          const avgMag=group.reduce((sum,q)=>sum+q.mag,0)/group.length;
-          candidates.push({orientation,x1:x1*(sourceW/aw),y1:y1*(sourceH/ah),x2:x2*(sourceW/aw),y2:y2*(sourceH/ah),score:length*Math.min(2,group.length/Math.max(1,length))*avgMag/50,angle:lineAngle,mx,my});
+    // 3x3 Box-Blur (schnell, dämpft Maserung/Rauschen ohne Kanten zu zerstören)
+    const gray = new Float32Array(size);
+    for (let y = 0; y < ah; y++) {
+      for (let x = 0; x < aw; x++) {
+        let sum = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = y + dy; if (yy < 0 || yy >= ah) continue;
+          const row = yy * aw;
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx; if (xx < 0 || xx >= aw) continue;
+            sum += gray0[row + xx]; n++;
+          }
         }
-        group=[];groupStart=null;
+        gray[y * aw + x] = sum / n;
+      }
+    }
+
+    // Optionaler Analysebereich (ROI) in Analysekoordinaten
+    let x0 = 1, y0 = 1, x1b = aw - 2, y1b = ah - 2;
+    if (roi && Number.isFinite(roi.x1)) {
+      const sx = aw / sourceW, sy = ah / sourceH;
+      x0 = Math.max(1, Math.floor(Math.min(roi.x1, roi.x2) * sx));
+      y0 = Math.max(1, Math.floor(Math.min(roi.y1, roi.y2) * sy));
+      x1b = Math.min(aw - 2, Math.ceil(Math.max(roi.x1, roi.x2) * sx));
+      y1b = Math.min(ah - 2, Math.ceil(Math.max(roi.y1, roi.y2) * sy));
+      if (x1b - x0 < 8 || y1b - y0 < 8) { x0 = 1; y0 = 1; x1b = aw - 2; y1b = ah - 2; }
+    }
+
+    const magnitude = new Float32Array(size);
+    const angle = new Float32Array(size);
+    const histogram = new Uint32Array(256);
+    let eligible = 0;
+    for (let y = y0; y <= y1b; y++) {
+      const row = y * aw;
+      for (let x = x0; x <= x1b; x++) {
+        const i = row + x;
+        const gx = -gray[i - aw - 1] + gray[i - aw + 1] - 2 * gray[i - 1] + 2 * gray[i + 1] - gray[i + aw - 1] + gray[i + aw + 1];
+        const gy = -gray[i - aw - 1] - 2 * gray[i - aw] - gray[i - aw + 1] + gray[i + aw - 1] + 2 * gray[i + aw] + gray[i + aw + 1];
+        const mag = Math.hypot(gx, gy);
+        magnitude[i] = mag;
+        if (mag >= 8) { histogram[Math.min(255, Math.floor(mag / 5))]++; eligible++; }
+        let a = Math.atan2(gy, gx);
+        if (a < 0) a += Math.PI;
+        if (a >= Math.PI) a -= Math.PI;
+        angle[i] = a;
+      }
+    }
+    if (eligible < 25) return [];
+
+    // Adaptiver Schwellenwert (etwas milder als zuvor, damit weiche Möbelkanten bleiben)
+    const target = Math.floor(eligible * 0.30);
+    let cumulative = 0, quantile = 3;
+    for (let b = 1; b < histogram.length; b++) {
+      cumulative += histogram[b];
+      if (cumulative >= target) { quantile = b; break; }
+    }
+    const threshold = Math.max(8, Math.min(38, quantile * 5 * 0.58));
+
+    // Nichtmaximum-Unterdrückung + Kantensammlung
+    const edgeX = [], edgeY = [], edgeMag = [], edgeAngle = [];
+    for (let y = Math.max(2, y0); y <= Math.min(ah - 3, y1b); y++) {
+      const row = y * aw;
+      for (let x = Math.max(2, x0); x <= Math.min(aw - 3, x1b); x++) {
+        const i = row + x, mag = magnitude[i];
+        if (mag < threshold) continue;
+        const a = angle[i];
+        // 4 Richtungs-Quantisierung für NMS (robuster als round(cos/sin))
+        const sector = Math.round(a / (Math.PI / 4)) % 4;
+        let xStep = 0, yStep = 0;
+        if (sector === 0) { xStep = 1; yStep = 0; }
+        else if (sector === 1) { xStep = 1; yStep = 1; }
+        else if (sector === 2) { xStep = 0; yStep = 1; }
+        else { xStep = 1; yStep = -1; }
+        const m1 = magnitude[(y - yStep) * aw + (x - xStep)];
+        const m2 = magnitude[(y + yStep) * aw + (x + xStep)];
+        if (mag < m1 || mag < m2) continue;
+        edgeX.push(x); edgeY.push(y); edgeMag.push(mag); edgeAngle.push(a);
+      }
+    }
+    const edgeCount = edgeX.length;
+    if (edgeCount < 16) return [];
+
+    // Hough mit Winkel-Toleranz: jeder Kantenpunkt stimmt in ±2 Bins ab
+    const thetaBins = 36; // 5°
+    const diagonal = Math.ceil(Math.hypot(aw, ah));
+    const rhoCount = diagonal * 2 + 1;
+    const accumulator = new Float32Array(thetaBins * rhoCount);
+    const cosT = new Float32Array(thetaBins), sinT = new Float32Array(thetaBins);
+    for (let t = 0; t < thetaBins; t++) {
+      const a = t * Math.PI / thetaBins;
+      cosT[t] = Math.cos(a); sinT[t] = Math.sin(a);
+    }
+    const angleSpread = 2; // ±2 Bins ≈ ±10°
+    for (let i = 0; i < edgeCount; i++) {
+      const baseT = Math.round(edgeAngle[i] * thetaBins / Math.PI);
+      const weight = Math.min(2.5, 0.6 + edgeMag[i] / 40);
+      for (let dt = -angleSpread; dt <= angleSpread; dt++) {
+        let t = (baseT + dt) % thetaBins;
+        if (t < 0) t += thetaBins;
+        const rho = Math.round(edgeX[i] * cosT[t] + edgeY[i] * sinT[t]) + diagonal;
+        if (rho >= 0 && rho < rhoCount) {
+          // weichere Stimmen in den Nachbarbins
+          const w = weight * (dt === 0 ? 1 : 0.55);
+          accumulator[t * rhoCount + rho] += w;
+        }
+      }
+    }
+
+    const minVotes = Math.max(8, Math.round(Math.min(aw, ah) * 0.012));
+    const peaks = [];
+    for (let t = 0; t < thetaBins; t++) {
+      const off = t * rhoCount;
+      for (let r = 2; r < rhoCount - 2; r++) {
+        const votes = accumulator[off + r];
+        if (votes < minVotes) continue;
+        let isMax = true;
+        for (let dr = -2; dr <= 2 && isMax; dr++) {
+          if (dr !== 0 && accumulator[off + r + dr] > votes) isMax = false;
+        }
+        // auch gegen benachbarte Winkel prüfen (unterdrückt Doppelpeaks)
+        if (isMax) {
+          for (let dt = -1; dt <= 1 && isMax; dt++) {
+            if (dt === 0) continue;
+            let t2 = (t + dt) % thetaBins; if (t2 < 0) t2 += thetaBins;
+            if (accumulator[t2 * rhoCount + r] > votes * 1.05) isMax = false;
+          }
+        }
+        if (isMax) peaks.push({ t, rho: r - diagonal, votes });
+      }
+    }
+    peaks.sort((a, b) => b.votes - a.votes);
+
+    const candidates = [];
+    const maxPeaks = Math.min(180, peaks.length);
+    const minSegmentLength = Math.max(16, Math.min(aw, ah) * 0.022);
+    const gapTol = Math.max(10, Math.round(Math.min(aw, ah) * 0.022)); // stärkere Toleranz für Kantenunterbrechungen
+
+    for (let pi = 0; pi < maxPeaks; pi++) {
+      const peak = peaks[pi];
+      const theta = peak.t * Math.PI / thetaBins;
+      const ct = cosT[peak.t], st = sinT[peak.t];
+      const points = [];
+      for (let i = 0; i < edgeCount; i++) {
+        let da = Math.abs(edgeAngle[i] - theta);
+        da = Math.min(da, Math.PI - da);
+        if (da > Math.PI * 25 / 180) continue; // breite Winkeltoleranz für perspektivische/raue Kanten
+        const distance = Math.abs(edgeX[i] * ct + edgeY[i] * st - peak.rho);
+        if (distance > 2.6) continue;
+        points.push({ t: -edgeX[i] * st + edgeY[i] * ct, x: edgeX[i], y: edgeY[i], mag: edgeMag[i] });
+      }
+      if (points.length < Math.max(8, minVotes * 0.7)) continue;
+      points.sort((a, b) => a.t - b.t);
+
+      let group = [];
+      const flush = () => {
+        if (group.length < 8) { group = []; return; }
+        const first = group[0], last = group[group.length - 1];
+        const length = last.t - first.t;
+        if (length < minSegmentLength) { group = []; return; }
+        const density = group.length / Math.max(1, length);
+        if (density < 0.035) { group = []; return; }
+        const x1 = peak.rho * ct + first.t * (-st);
+        const y1 = peak.rho * st + first.t * ct;
+        const x2 = peak.rho * ct + last.t * (-st);
+        const y2 = peak.rho * st + last.t * ct;
+        const lineAngle = (Math.atan2(y2 - y1, x2 - x1) + Math.PI * 2) % Math.PI;
+        const deg = lineAngle * 180 / Math.PI;
+        const orientation = (deg < 14 || deg > 166) ? "horizontal" : (Math.abs(deg - 90) < 14 ? "vertical" : "diagonal");
+        const avgMag = group.reduce((s, q) => s + q.mag, 0) / group.length;
+        // Länge und Kontinuität stärker gewichten; leichte Bevorzugung von H/V (Möbel)
+        const orientBonus = 1.0; // keine Bevorzugung von horizontal/vertikal: Perspektivkanten gleich behandeln
+        const score = length * Math.min(2.2, density * 12) * (avgMag / 35) * orientBonus;
+        candidates.push({
+          orientation,
+          x1: x1 * (sourceW / aw), y1: y1 * (sourceH / ah),
+          x2: x2 * (sourceW / aw), y2: y2 * (sourceH / ah),
+          score, angle: lineAngle
+        });
+        group = [];
       };
-      for(const q of points) {
-        if(group.length && q.t-group[group.length-1].t>5) flush();
-        if(!group.length) groupStart=q.t;
+      for (const q of points) {
+        if (group.length && q.t - group[group.length - 1].t > gapTol) flush();
         group.push(q);
       }
       flush();
     }
-    candidates.sort((a,b)=>b.score-a.score);
-    const chosen=[];
-    for(const c of candidates) {
-      const cdx=c.x2-c.x1, cdy=c.y2-c.y1, clen=Math.max(1,Math.hypot(cdx,cdy));
-      const similar=chosen.some(o=>{
-        const odx=o.x2-o.x1, ody=o.y2-o.y1, olen=Math.max(1,Math.hypot(odx,ody));
-        const a1=Math.atan2(cdy,cdx), a2=Math.atan2(ody,odx);
-        let da=Math.abs(a1-a2)%Math.PI; da=Math.min(da,Math.PI-da);
-        if(da>8*Math.PI/180) return false;
-        const cmx=(c.x1+c.x2)/2, cmy=(c.y1+c.y2)/2, omx=(o.x1+o.x2)/2, omy=(o.y1+o.y2)/2;
-        const normalDistance=Math.abs((cmx-omx)*(-ody/olen)+(cmy-omy)*(odx/olen));
-        if(normalDistance>Math.max(5,Math.min(sourceW,sourceH)*0.012)) return false;
-        const ux=odx/olen, uy=ody/olen;
-        const ca=c.x1*ux+c.y1*uy, cb=c.x2*ux+c.y2*uy, oa=o.x1*ux+o.y1*uy, ob=o.x2*ux+o.y2*uy;
-        const overlap=Math.max(0,Math.min(Math.max(ca,cb),Math.max(oa,ob))-Math.max(Math.min(ca,cb),Math.min(oa,ob)));
-        return overlap/Math.max(1,Math.min(clen,olen))>0.48;
+
+    candidates.sort((a, b) => b.score - a.score);
+    const chosen = [];
+    const imgMin = Math.min(sourceW, sourceH);
+    for (const c of candidates) {
+      const cdx = c.x2 - c.x1, cdy = c.y2 - c.y1;
+      const clen = Math.max(1, Math.hypot(cdx, cdy));
+      if (clen < Math.max(22, imgMin * 0.025)) continue;
+      const similar = chosen.some((o) => {
+        const odx = o.x2 - o.x1, ody = o.y2 - o.y1;
+        const olen = Math.max(1, Math.hypot(odx, ody));
+        const a1 = Math.atan2(cdy, cdx), a2 = Math.atan2(ody, odx);
+        let da = Math.abs(a1 - a2) % Math.PI; da = Math.min(da, Math.PI - da);
+        if (da > 10 * Math.PI / 180) return false;
+        const cmx = (c.x1 + c.x2) / 2, cmy = (c.y1 + c.y2) / 2;
+        const omx = (o.x1 + o.x2) / 2, omy = (o.y1 + o.y2) / 2;
+        const normalDistance = Math.abs((cmx - omx) * (-ody / olen) + (cmy - omy) * (odx / olen));
+        if (normalDistance > Math.max(6, imgMin * 0.014)) return false;
+        const ux = odx / olen, uy = ody / olen;
+        const ca = c.x1 * ux + c.y1 * uy, cb = c.x2 * ux + c.y2 * uy;
+        const oa = o.x1 * ux + o.y1 * uy, ob = o.x2 * ux + o.y2 * uy;
+        const overlap = Math.max(0, Math.min(Math.max(ca, cb), Math.max(oa, ob)) - Math.max(Math.min(ca, cb), Math.min(oa, ob)));
+        return overlap / Math.max(1, Math.min(clen, olen)) > 0.42;
       });
-      if(!similar) chosen.push(c);
-      if(chosen.length>=14) break;
+      if (!similar) chosen.push(c);
+      if (chosen.length >= 24) break;
     }
-    return chosen.map(c=>({orientation:c.orientation,x1:Math.max(0,Math.min(sourceW-1,c.x1)),y1:Math.max(0,Math.min(sourceH-1,c.y1)),x2:Math.max(0,Math.min(sourceW-1,c.x2)),y2:Math.max(0,Math.min(sourceH-1,c.y2)),score:c.score,id:nextSuggestionId++}));
+    return chosen.map((c) => ({
+      orientation: c.orientation,
+      x1: Math.max(0, Math.min(sourceW - 1, c.x1)),
+      y1: Math.max(0, Math.min(sourceH - 1, c.y1)),
+      x2: Math.max(0, Math.min(sourceW - 1, c.x2)),
+      y2: Math.max(0, Math.min(sourceH - 1, c.y2)),
+      score: c.score,
+      id: nextSuggestionId++
+    }));
   }
 
   function renderMeasureSuggestionsList() {
-    const list=$("measureSuggestionsList"), count=$("suggestionCount");
-    if(!list) return;
+    const list = $("measureSuggestionsList"), count = $("suggestionCount");
+    if (!list) return;
     list.replaceChildren();
-    if(count) count.textContent=`${measureSuggestions.length} offen`;
-    if(!measureSuggestions.length) {
-      const p=document.createElement("p"); p.className="empty-list"; p.textContent="Noch keine Vorschläge. Tippe auf „Mögliche Maßlinien suchen“."; list.append(p); return;
+    if (count) count.textContent = `${measureSuggestions.length} offen`;
+    if (!measureSuggestions.length) {
+      const p = document.createElement("p");
+      p.className = "empty-list";
+      p.textContent = "Noch keine Vorschläge. Tippe auf „Mögliche Maßlinien suchen“.";
+      list.append(p);
+      return;
     }
-    measureSuggestions.forEach((s,i)=>{
-      const row=document.createElement("div"); row.className="suggestion-item";
-      const info=document.createElement("div"); info.className="suggestion-info";
-      const title=document.createElement("strong"); title.textContent=`Vorschlag ${i+1} · ${s.orientation==="horizontal"?"waagerecht":(s.orientation==="vertical"?"senkrecht":"schräg")}`;
-      const detail=document.createElement("small"); detail.textContent=`ca. ${Math.round(Math.hypot(s.x2-s.x1,s.y2-s.y1))} Bildpixel · bitte im Foto prüfen`;
-      info.append(title,detail);
-      const accept=document.createElement("button"); accept.type="button"; accept.className="suggestion-accept"; accept.textContent="Übernehmen";
-      accept.addEventListener("click",()=>acceptMeasureSuggestion(s.id));
-      const dismiss=document.createElement("button"); dismiss.type="button"; dismiss.className="secondary suggestion-dismiss"; dismiss.textContent="Verwerfen";
-      dismiss.addEventListener("click",()=>{measureSuggestions=measureSuggestions.filter(x=>x.id!==s.id);renderMeasureSuggestionsList();draw();});
-      row.append(info,accept,dismiss); list.append(row);
+    measureSuggestions.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.className = "suggestion-item" + (s.id === selectedSuggestionId ? " selected" : "");
+      row.setAttribute("role", "button");
+      row.tabIndex = 0;
+      const info = document.createElement("div");
+      info.className = "suggestion-info";
+      const title = document.createElement("strong");
+      title.textContent = `Vorschlag ${i + 1} · ${s.orientation === "horizontal" ? "waagerecht" : (s.orientation === "vertical" ? "senkrecht" : "schräg")}`;
+      const detail = document.createElement("small");
+      detail.textContent = `ca. ${Math.round(Math.hypot(s.x2 - s.x1, s.y2 - s.y1))} Bildpixel${s.source === "marker" ? " · aus Konturmarkierung" : ""} · tippen zum Hervorheben`;
+      info.append(title, detail);
+      const accept = document.createElement("button");
+      accept.type = "button";
+      accept.className = "suggestion-accept";
+      accept.textContent = "Übernehmen";
+      accept.addEventListener("click", (ev) => { ev.stopPropagation(); acceptMeasureSuggestion(s.id); });
+      const dismiss = document.createElement("button");
+      dismiss.type = "button";
+      dismiss.className = "secondary suggestion-dismiss";
+      dismiss.textContent = "Verwerfen";
+      dismiss.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        measureSuggestions = measureSuggestions.filter((x) => x.id !== s.id);
+        if (selectedSuggestionId === s.id) selectedSuggestionId = null;
+        renderMeasureSuggestionsList();
+        draw();
+      });
+      row.addEventListener("click", () => {
+        selectedSuggestionId = s.id;
+        renderMeasureSuggestionsList();
+        draw();
+      });
+      row.append(info, accept, dismiss);
+      list.append(row);
     });
   }
   function acceptMeasureSuggestion(id) {
-    const s=measureSuggestions.find(x=>x.id===id); if(!s) return;
-    const before=snapshot();
-    const m={id:nextId++,type:"linear",isReference:false,x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2,value:"",unit:unitSelect.value,color:colorInput.value,textBg:$("textBgToggle").checked,autoCalculated:false};
-    const value=calculatedValueFor(m,m.unit);
-    if(value!==null) {m.value=value;m.autoCalculated=true;}
-    pushHistory(before); measures.push(m); selectedId=m.id;
-    measureSuggestions=measureSuggestions.filter(x=>x.id!==id);
-    refresh(); renderMeasureSuggestionsList();
+    const s = measureSuggestions.find((x) => x.id === id);
+    if (!s) return;
+    const before = snapshot();
+    const m = {
+      id: nextId++, type: "linear", isReference: false,
+      x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2,
+      value: "", unit: unitSelect.value, color: colorInput.value,
+      textBg: $("textBgToggle").checked, autoCalculated: false
+    };
+    const value = calculatedValueFor(m, m.unit);
+    if (value !== null) { m.value = value; m.autoCalculated = true; }
+    pushHistory(before);
+    measures.push(m);
+    selectedId = m.id;
+    measureSuggestions = measureSuggestions.filter((x) => x.id !== id);
+    if (selectedSuggestionId === id) selectedSuggestionId = null;
+    refresh();
+    renderMeasureSuggestionsList();
     setTool("select");
-    if(!m.autoCalculated) openValueDialog(m.id,{isNew:true});
-    else setStatus(`Vorschlag übernommen: ${fmt(m.value)}${m.unit||" mm"}. Bitte Maßstab und Kante kontrollieren.`);
+    if (!m.autoCalculated) openValueDialog(m.id, { isNew: true });
+    else setStatus(`Vorschlag übernommen: ${fmt(m.value)}${m.unit || " mm"}. Bitte Maßstab und Kante kontrollieren.`);
   }
-  $("detectMeasureSuggestions").addEventListener("click",()=>{
-    if(!photoLoaded) return;
+  function clearAllSuggestions() {
+    if (!measureSuggestions.length) return;
+    measureSuggestions = [];
+    selectedSuggestionId = null;
+    renderMeasureSuggestionsList();
+    draw();
+    setStatus("Alle unverbindlichen Vorschläge verworfen.");
+  }
+  $("detectMeasureSuggestions").addEventListener("click", () => {
+    if (!photoLoaded) return;
     try {
-      measureSuggestions=detectImageEdgeSuggestions();
-      renderMeasureSuggestionsList(); draw();
-      setStatus(measureSuggestions.length ? `${measureSuggestions.length} mögliche Kanten gefunden. Prüfe jede Linie und übernimm nur passende Vorschläge.` : "Keine ausreichend deutlichen Kanten gefunden. Probiere ein schärferes, kontrastreicheres Foto.");
-    } catch(err) {
-      console.error("Kantenerkennung fehlgeschlagen",err);
+      measureSuggestions = detectImageEdgeSuggestions(analysisRoi);
+      selectedSuggestionId = measureSuggestions.length ? measureSuggestions[0].id : null;
+      renderMeasureSuggestionsList();
+      draw();
+      const roiNote = analysisRoi ? " (im markierten Bereich)" : "";
+      setStatus(measureSuggestions.length
+        ? `${measureSuggestions.length} mögliche Kanten gefunden${roiNote}. Prüfe jede Linie und übernimm nur passende Vorschläge.`
+        : "Keine ausreichend deutlichen Kanten gefunden. Schärferes Foto oder optional einen Suchbereich markieren.");
+    } catch (err) {
+      console.error("Kantenerkennung fehlgeschlagen", err);
       setStatus("Die Kantenerkennung konnte dieses Foto nicht analysieren.");
     }
   });
+  const clearSugBtn = $("clearMeasureSuggestions");
+  if (clearSugBtn) clearSugBtn.addEventListener("click", clearAllSuggestions);
+  const setRoiBtn = $("setAnalysisRoi");
+  if (setRoiBtn) setRoiBtn.addEventListener("click", () => {
+    if (!photoLoaded) return;
+    // Bevorzugt: ausgewähltes Rechteck als Suchbereich
+    const sel = drawings.find((d) => d.id === selectedDrawingId && d.type === "rect");
+    if (sel) {
+      analysisRoi = {
+        x1: Math.min(sel.x1, sel.x2), y1: Math.min(sel.y1, sel.y2),
+        x2: Math.max(sel.x1, sel.x2), y2: Math.max(sel.y1, sel.y2)
+      };
+      setReady(true);
+      draw();
+      setStatus("Suchbereich gesetzt. Tippe auf „Mögliche Maßlinien suchen“.");
+      return;
+    }
+    setStatus("Zuerst mit dem Rechteck-Werkzeug einen Rahmen um das Werkstück ziehen und auswählen, dann „Suchbereich setzen“.");
+  });
+  const clearRoiBtn = $("clearAnalysisRoi");
+  if (clearRoiBtn) clearRoiBtn.addEventListener("click", () => {
+    analysisRoi = null;
+    setReady(photoLoaded);
+    draw();
+    setStatus("Suchbereich gelöst – Erkennung nutzt wieder das ganze Foto.");
+  });
+
 
   function drawMeasurePreview(g, d, k) {
     g.save();
@@ -975,7 +1174,7 @@
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
   function resetState() {
-    measures = []; measureSuggestions = []; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
+    measures = []; measureSuggestions = []; selectedSuggestionId = null; analysisRoi = null; drawings = []; history = []; redoStack = []; selectedId = null; selectedDrawingId = null; anglePoints = []; nextId = 1; snapPoint = null;
     activeDrawing = null; updateHistoryButtons();
   }
 
