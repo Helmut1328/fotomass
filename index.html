@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#152536">
+  <meta name="description" content="FotoMaß – Fotos aufnehmen, Maße eintragen und Skizzen ergänzen.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="FotoMaß">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style_patch.css">
+  <title>FotoMaß</title>
+</head>
+<body>
+  <header class="topbar">
+    <div><h1>FotoMaß</h1></div>
+    <span id="saveBadge" class="save-badge" data-state="idle" role="status" aria-live="polite"></span>
+    <button id="styleToggle" class="secondary compact" type="button">Baustellenstil</button>
+  </header>
+
+  <main>
+    <section class="panel compact-panel">
+      <div class="button-row photo-buttons">
+        <label class="file-button">
+          📷 Kamera
+          <input id="photoCamera" type="file" accept="image/*" capture="environment">
+        </label>
+        <label class="file-button secondary-look">
+          🖼 Galerie
+          <input id="photoGallery" type="file" accept="image/*">
+        </label>
+      </div>
+      <p id="photoStatus" class="status-inline">Noch kein Foto</p>
+      <div class="button-row sketch-mode-row" aria-label="Arbeitsmodus">
+        <button id="newSketch" class="secondary" type="button">＋ Neue 2D-Skizze</button>
+        <button id="toggleSketchView" class="secondary" type="button" disabled>✎ Skizzenansicht</button>
+      </div>
+      <p id="sketchModeHint" class="hint">Foto und Zeichnung bleiben im selben Projekt. Eine neue 2D-Skizze kann auch ohne Foto erstellt werden.</p>
+    </section>
+
+    <section class="panel editor-panel">
+      <div id="canvasWrap" class="canvas-wrap">
+        <div id="emptyState" class="empty-state">
+          <span>📐</span>
+          <strong>Foto oder Skizze starten</strong>
+          <small>Oben Kamera, Galerie oder „Neue 2D-Skizze“ wählen</small>
+        </div>
+        <div id="viewport" class="viewport">
+          <canvas id="editorCanvas" aria-label="Foto mit Maßlinien"></canvas>
+        </div>
+        <div id="crosshair" class="crosshair" hidden>
+          <div class="ch-h"></div>
+          <div class="ch-v"></div>
+          <div class="ch-dot"></div>
+        </div>
+      </div>
+
+      <div class="zoom-bar">
+        <button id="zoomOut" class="secondary compact" type="button">−</button>
+        <span id="zoomLabel" class="zoom-label">100 %</span>
+        <button id="zoomIn" class="secondary compact" type="button">+</button>
+        <button id="zoomReset" class="secondary compact" type="button">Fit</button>
+        <label class="crosshair-toggle">
+          <input id="crosshairToggle" type="checkbox">
+          Fadenkreuz
+        </label>
+      </div>
+      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden neue Maßlinien berechnet</p>
+
+      <div class="toolbox">
+        <div class="tool-grid primary-tools" aria-label="Hauptwerkzeuge">
+          <button class="tool active" data-tool="select" type="button" title="Objekte auswählen und bearbeiten">↖ <span>Auswählen</span></button>
+          <button class="tool" data-tool="measure" type="button" title="Neue Maßlinie zeichnen">＋ <span>Maß</span></button>
+          <button class="tool" data-tool="reference" type="button" title="Bekannte Strecke als Referenz festlegen">⚖ <span>Referenz</span></button>
+        </div>
+        <details class="tool-details">
+          <summary>Weitere Zeichenwerkzeuge <span class="summary-hint">Winkel, Freihand, Linie, Rechteck, Text</span></summary>
+          <div class="tool-grid secondary-tools">
+            <button class="tool" data-tool="angle" type="button">∠ <span>Winkel</span></button>
+            <button class="tool" data-tool="freehand" type="button">✎ <span>Freihand</span></button>
+            <button class="tool" data-tool="line" type="button">／ <span>Linie</span></button>
+            <button class="tool" data-tool="rect" type="button">□ <span>Rechteck</span></button>
+            <button class="tool" data-tool="text" type="button">T <span>Text</span></button>
+            <button class="tool" data-tool="eraser" type="button">⌫ <span>Radierer</span></button>
+          </div>
+        </details>
+        <div class="button-row" style="margin-top:8px"><button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button></div>
+        <div class="dimension-style-row" aria-label="Maßlinien-Darstellung">
+          <strong class="dimension-style-title">Maßlinien</strong>
+          <label>Enden
+            <select id="dimensionEndStyle">
+              <option value="slash" selected>45°-Schrägstriche</option>
+              <option value="filled">Gefüllte Pfeile</option>
+              <option value="open">Offene Pfeile</option>
+              <option value="hollow">Hohle Pfeile</option>
+              <option value="dot">Punkte</option>
+              <option value="tick">Querstriche</option>
+            </select>
+          </label>
+          <label>Endgröße <input id="dimensionEndSize" type="range" min="5" max="20" value="10"></label>
+          <label class="dimension-extension-label"><input id="dimensionExtensionLines" type="checkbox" checked> Maßhilfslinien</label>
+          <button id="applyDimensionStyle" class="secondary compact" type="button" disabled>Stil auf ausgewählte Maßlinie anwenden</button>
+        </div>
+
+        <details class="tool-details advanced-details">
+          <summary>Bild einfügen &amp; Zeichenoptionen</summary>
+          <div class="advanced-tools">
+        <div class="button-row image-tools">
+          <button id="insertImageButton" class="secondary" type="button">🖼 Bild einfügen / zuschneiden</button>
+          <input id="insertImageInput" type="file" accept="image/*" hidden>
+          <label class="free-resize-option"><input id="freeResizeToggle" type="checkbox"> Freie Verzerrung</label>
+          <label class="free-resize-option"><input id="rectFillToggle" type="checkbox"> Rechteck füllen</label>
+          <label class="free-resize-option">Deckkraft <input id="rectFillOpacity" type="range" min="0" max="100" step="1" value="100"> <input id="rectFillOpacityNumber" type="number" min="0" max="100" step="1" value="100" aria-label="Deckkraft in Prozent" style="width:4.5rem"> <span id="rectFillOpacityValue">100%</span></label>
+        </div>
+        <p class="hint">Bild auswählen, den gelben Zuschneiderahmen direkt ziehen und einfügen. Danach mit „Auswählen“ verschieben; Größe standardmäßig proportional ändern. „Freie Verzerrung“ erlaubt unabhängige Breite und Höhe.</p>
+        <div class="settings-row">
+          <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
+          <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
+
+          <label>Schrift <input id="fontSizeInput" type="range" min="10" max="40" value="24"></label>
+          <label class="text-bg-label"><input id="textBgToggle" type="checkbox" checked> Textfläche</label>
+          <label>Einheit
+            <select id="unitSelect">
+              <option value=" mm">mm</option>
+              <option value=" cm">cm</option>
+              <option value=" m">m</option>
+            </select>
+          </label>
+          <label class="snap-label">
+            <input id="snapToggle" type="checkbox" checked>
+            Einrasten
+          </label>
+        </div>
+          </div>
+        </details>      </div>
+
+      <details class="tool-details dimension-tools">
+        <summary>Maßbasierte Skizze erstellen <span class="summary-hint">Rechteck mit exakten Maßen</span></summary>
+        <div class="dimension-form">
+          <label>Breite (mm)<input id="sketchWidthMm" type="number" min="1" max="100000" step="1" value="800" inputmode="decimal"></label>
+          <label>Höhe (mm)<input id="sketchHeightMm" type="number" min="1" max="100000" step="1" value="600" inputmode="decimal"></label>
+          <button id="addDimensionRect" type="button">Rechteck erzeugen</button>
+        </div>
+        <p class="hint">Erzeugt ein maßstäbliches Rechteck mit zwei Maßlinien. Weitere Bauteile kannst du anschließend frei ergänzen.</p>
+      </details>
+      <div class="button-row action-row">
+        <button id="undo" class="secondary" type="button" disabled>↶ Zurück</button>
+        <button id="redo" class="secondary" type="button" disabled>↷ Wieder</button>
+        <button id="clearAll" class="danger" type="button" disabled>Alles löschen</button>
+      </div>
+      <div class="button-row action-row">
+        <button id="exportImage" type="button" disabled>🖼 In Galerie (2 Fotos)</button>
+        <button id="exportProject" class="secondary" type="button" disabled>📁 In Dateien sichern</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading">
+        <h2>Maße</h2>
+        <span class="hint">tippen / 🎤 sprechen</span>
+      </div>
+      <div id="measureList" class="measure-list">
+        <p class="empty-list">Noch keine Maßlinien.</p>
+      </div>
+    </section>
+
+    <section class="panel compact-panel">
+      <label class="field-label" for="projectName">Projektname</label>
+      <input id="projectName" class="text-input" type="text" placeholder="z. B. Küche Müller" autocomplete="off">
+      <div class="button-row" style="margin-top:8px">
+        <button id="importProject" class="secondary" type="button">📂 Projekt-Datei öffnen</button>
+        <input id="projectFileInput" type="file" accept=".json,.fotomass,application/json,text/plain" hidden>
+      </div>
+      <div class="button-row" style="margin-top:8px">
+        <button id="saveProject" class="secondary" type="button" disabled>💾 Jetzt sichern</button>
+        <button id="loadProject" class="secondary" type="button">📚 Projekte</button>
+      </div>
+      <p id="saveStatus" class="hint">Jede Änderung wird automatisch im Browser gesichert (Anzeige oben). Ein neues Foto legt ein neues Projekt an – das bisherige bleibt in „Projekte“. „In Dateien sichern“ erstellt zusätzlich ein Backup, das du später wieder öffnen kannst.</p>
+    </section>
+  </main>
+
+  <footer>FotoMaß · Maße vor Fertigung vor Ort prüfen.</footer>
+
+  <!-- Text-Dialog -->
+  <div id="imageCropDialog" class="dialog" hidden>
+    <div class="dialog-box wide crop-box">
+      <h2>Bild zuschneiden</h2>
+      <p class="hint">Mit den Reglern den gewünschten Ausschnitt wählen. Danach wird das Bild ins Aufmaß eingefügt.</p>
+      <canvas id="cropPreviewCanvas" class="crop-preview" width="600" height="400"></canvas>
+      <div class="crop-controls">
+        <label>Links <input id="cropLeft" type="range" min="0" max="40" value="0"></label>
+        <label>Rechts <input id="cropRight" type="range" min="0" max="40" value="0"></label>
+        <label>Oben <input id="cropTop" type="range" min="0" max="40" value="0"></label>
+        <label>Unten <input id="cropBottom" type="range" min="0" max="40" value="0"></label>
+      </div>
+      <div class="dialog-actions">
+        <button id="cropCancel" class="secondary" type="button">Abbrechen</button>
+        <button id="cropReset" class="secondary" type="button">Zurücksetzen</button>
+        <button id="cropInsert" type="button">Ausschnitt einfügen</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="textDialog" class="dialog" hidden>
+    <div class="dialog-box">
+      <label for="textDialogInput" id="textDialogTitle">Beschriftung</label>
+      <input id="textDialogInput" type="text" maxlength="80" placeholder="z. B. Korpus neu">
+      <div class="text-edit-options">
+        <label for="textDialogSize">Schriftgröße</label>
+        <input id="textDialogSize" type="range" min="12" max="96" step="1" value="28">
+        <label for="textDialogColor">Textfarbe</label>
+        <input id="textDialogColor" type="color" value="#ff3b30">
+        <label class="inline-check" for="textDialogBg"><input id="textDialogBg" type="checkbox" checked> Weißer Texthintergrund</label>
+      </div>
+      <div class="dialog-actions">
+        <button id="textDialogCancel" class="secondary" type="button">Abbrechen</button>
+        <button id="textDialogOk" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Maßwert-Dialog -->
+  <div id="valueDialog" class="dialog" hidden>
+    <div class="dialog-box">
+      <label for="valueDialogInput" id="valueDialogTitle">Maßwert</label>
+      <div class="value-label-options">
+        <label for="dimensionPrefix">Text davor (optional)</label>
+        <input id="dimensionPrefix" type="text" maxlength="24" placeholder="z. B. lichte Weite">
+        <label for="dimensionSuffix">Text danach (optional)</label>
+        <input id="dimensionSuffix" type="text" maxlength="24" placeholder="z. B. Bestand">
+      </div>
+      <div class="value-row">
+        <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234" autocomplete="off" enterkeyhint="done">
+        <select id="valueDialogUnit" aria-label="Einheit">
+          <option value=" mm">mm</option>
+          <option value=" cm">cm</option>
+          <option value=" m">m</option>
+          <option value="°">°</option>
+        </select>
+        <button id="valueDialogMic" class="mic-btn" type="button" title="Sprache">🎤</button>
+      </div>
+      <p id="valueDialogHint" class="hint">Zahl tippen oder 🎤 antippen</p>
+      <div class="voice-options">
+        <label><input id="optAutoConfirm" type="checkbox" checked> Nach Sprache automatisch übernehmen</label>
+        <label><input id="optAutoMic" type="checkbox"> 🎤 beim Öffnen sofort starten</label>
+        <button id="keyboardToggle" class="link-btn" type="button">⌨ Text-Tastatur (für iPhone-Diktat)</button>
+      </div>
+      <div class="dialog-actions">
+        <button id="valueDialogCancel" class="secondary" type="button">Abbrechen</button>
+        <button id="valueDialogOk" type="button">Übernehmen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Menü bei langem Drücken auf eine Maßlinie -->
+  <div id="actionDialog" class="dialog" hidden>
+    <div class="dialog-box">
+      <label id="actionTitle">Maß</label>
+      <div class="action-list">
+        <button id="actValue" type="button">✏ Wert ändern</button>
+        <button id="actMic" type="button">🎤 Wert sprechen</button>
+        <label class="action-color">🎨 Farbe <input id="actColor" type="color" value="#ff3b30"></label>
+ <button id="actLock" class="secondary" type="button">🔒 Maßlinie sperren</button>
+        <button id="actDuplicate" class="secondary" type="button">⧉ Duplizieren</button>
+        <button id="actDelete" class="danger" type="button">🗑 Löschen</button>
+        <button id="actClose" class="secondary" type="button">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bilder sichern -->
+  <div id="saveDialog" class="dialog" hidden>
+    <div class="dialog-box wide">
+      <label id="saveDialogTitle">Zwei Fotos sichern</label>
+      <div class="preview-grid">
+        <figure id="previewOriginalFigure"><img id="prevOriginal" alt="Original"><figcaption id="capOriginal">Original</figcaption></figure>
+        <figure><img id="prevAnnotated" alt="Mit Maßen"><figcaption id="capAnnotated">Mit Maßen</figcaption></figure>
+      </div>
+      <button id="saveShare" type="button" class="big">📲 Beide in Fotos sichern</button>
+      <p id="saveDialogHint" class="hint">Im Menü „2 Bilder sichern“ wählen. Klappt das nicht: Bild lange drücken › „Zu Fotos hinzufügen“.</p>
+      <div class="dialog-actions">
+        <button id="saveDownload" class="secondary" type="button">⬇ Als Dateien laden</button>
+        <button id="saveClose" class="secondary" type="button">Fertig</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browser-Projekte -->
+  <div id="projectsDialog" class="dialog" hidden>
+    <div class="dialog-box wide">
+      <label>Projekte im Browser</label>
+      <div id="projectsList" class="projects-list"></div>
+      <p id="storageInfo" class="hint"></p>
+      <div class="dialog-actions">
+        <button id="trashToggle" class="secondary" type="button">🗑 Papierkorb</button>
+        <button id="projectsClose" class="secondary" type="button">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Projekt-Datei sichern -->
+  <div id="projectFileDialog" class="dialog" hidden>
+    <div class="dialog-box wide">
+      <label>Projekt-Datei sichern</label>
+      <p id="projectFileInfo" class="hint">Datei wird vorbereitet …</p>
+      <div class="voice-options">
+        <label><input id="optWithOriginal" type="checkbox" checked> Originalfoto einschließen (größere Datei, vollständige Sicherung)</label>
+      </div>
+      <button id="projectFileShare" type="button" class="big" disabled>📁 In Dateien sichern</button>
+      <p class="hint">Im Menü „In Dateien sichern“ wählen und einen Ordner bestimmen.</p>
+      <div class="dialog-actions">
+        <button id="projectFileDownload" class="secondary" type="button" disabled>⬇ Herunterladen</button>
+        <button id="projectFileClose" class="secondary" type="button">Fertig</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="speech.js"></script>
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
