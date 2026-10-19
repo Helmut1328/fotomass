@@ -19,6 +19,9 @@
   const unitSelect = $("unitSelect");
   const colorInput = $("colorInput");
   const widthInput = $("widthInput");
+  const dimensionEndStyle = $("dimensionEndStyle");
+  const dimensionEndSize = $("dimensionEndSize");
+  const dimensionExtensionLines = $("dimensionExtensionLines");
   const fontSizeInput = $("fontSizeInput");
   const snapToggle = $("snapToggle");
   const crosshairToggle = $("crosshairToggle");
@@ -399,20 +402,57 @@
     g.fillStyle = color;
     g.lineWidth = (chosen ? 4 : 3) * k;
     g.lineCap = "round";
+    const angle = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
+
+    // Technische Maßhilfslinien: vom Endpunkt leicht über die Maßlinie hinaus.
+    // Da die vorhandenen Messobjekte keine separaten Objektkanten speichern,
+    // werden die Hilfslinien als kurze, einheitliche Verlängerungen dargestellt.
+    if (dimensionExtensionLines && dimensionExtensionLines.checked) {
+      const len = Math.max(10 * k, (Number(dimensionEndSize.value) || 10) * 1.5 * k);
+      const nx = -Math.sin(angle);
+      const ny = Math.cos(angle);
+      g.save();
+      g.strokeStyle = color;
+      g.lineWidth = Math.max(1, 1.25 * k);
+      g.globalAlpha = 0.78;
+      [[m.x1, m.y1], [m.x2, m.y2]].forEach(([x, y]) => {
+        g.beginPath();
+        g.moveTo(x - nx * 3 * k, y - ny * 3 * k);
+        g.lineTo(x + nx * len, y + ny * len);
+        g.stroke();
+      });
+      g.restore();
+    }
+
     g.beginPath();
     g.moveTo(m.x1, m.y1);
     g.lineTo(m.x2, m.y2);
     g.stroke();
-
-    const angle = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
-    const head = Math.max(9 * k, fs * 0.55);
+    const style = m.endStyle || dimensionEndStyle.value || "filled";
+    const head = Math.max(5 * k, (Number(dimensionEndSize.value) || 10) * k);
     [[m.x1, m.y1, angle], [m.x2, m.y2, angle + Math.PI]].forEach(([x, y, a]) => {
       g.beginPath();
-      g.moveTo(x, y);
-      g.lineTo(x + head * Math.cos(a - 0.45), y + head * Math.sin(a - 0.45));
-      g.lineTo(x + head * Math.cos(a + 0.45), y + head * Math.sin(a + 0.45));
-      g.closePath();
-      g.fill();
+      if (style === "dot") {
+        g.arc(x, y, Math.max(2 * k, head * 0.28), 0, Math.PI * 2);
+        g.fill();
+      } else if (style === "tick") {
+        const dx = Math.cos(a + Math.PI / 4) * head * 0.75;
+        const dy = Math.sin(a + Math.PI / 4) * head * 0.75;
+        g.moveTo(x - dx, y - dy); g.lineTo(x + dx, y + dy); g.stroke();
+      } else if (style === "slash") {
+        const dx = Math.cos(a + Math.PI / 4) * head * 0.75;
+        const dy = Math.sin(a + Math.PI / 4) * head * 0.75;
+        g.moveTo(x - dx, y - dy); g.lineTo(x + dx, y + dy); g.stroke();
+      } else {
+        const spread = 0.48;
+        g.moveTo(x, y);
+        g.lineTo(x + head * Math.cos(a - spread), y + head * Math.sin(a - spread));
+        g.lineTo(x + head * Math.cos(a + spread), y + head * Math.sin(a + spread));
+        g.closePath();
+        if (style === "open") { g.stroke(); }
+        else if (style === "hollow") { g.fillStyle = "white"; g.fill(); g.stroke(); }
+        else { g.fill(); }
+      }
     });
 
     const label = `${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
@@ -834,6 +874,8 @@
       id: projectId, projectName: $("projectName").value, created: projectCreated, savedAt: new Date().toISOString(),
       photoData, canvasMode, sketchScalePxPerMm, measures, drawings, nextId,
       unit: unitSelect.value, snap: snapToggle.checked, fontSize: getFontSize(),
+      dimensionEndStyle: dimensionEndStyle.value, dimensionEndSize: Number(dimensionEndSize.value) || 10,
+      dimensionExtensionLines: dimensionExtensionLines.checked,
       thumb: withThumb ? makeThumb() : undefined, deletedAt: null
     };
   }
@@ -907,6 +949,9 @@
         $("projectName").value = p.projectName;
         $("photoStatus").textContent = p.projectName || "Projekt geöffnet";
         unitSelect.value = p.unit; snapToggle.checked = p.snap; fontSizeInput.value = p.fontSize;
+        if (p.dimensionEndStyle) dimensionEndStyle.value = p.dimensionEndStyle;
+        if (p.dimensionEndSize) dimensionEndSize.value = String(p.dimensionEndSize);
+        dimensionExtensionLines.checked = p.dimensionExtensionLines !== false;
         renderMeasureList(); draw(); setReady(true);
         setSaveState("saved");
         resolve();
@@ -1706,6 +1751,9 @@
     }
   });
   fontSizeInput.addEventListener("input", () => { draw(); scheduleAutosave(); });
+  dimensionEndStyle.addEventListener("change", () => { draw(); scheduleAutosave(); });
+  dimensionEndSize.addEventListener("input", () => { draw(); scheduleAutosave(); });
+  dimensionExtensionLines.addEventListener("change", () => { draw(); scheduleAutosave(); });
   $("textBgToggle").addEventListener("change", () => {
     const m = measures.find((x) => x.id === selectedId);
     if (m) { remember(); m.textBg = $("textBgToggle").checked; refresh(); }

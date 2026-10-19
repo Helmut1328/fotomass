@@ -546,3 +546,25 @@ button.secondary{background:#f5f8fa}
 }
 body.sketch-mode #canvasWrap { background-color: #f7f9fc; }
 body.sketch-mode #editorCanvas { background: #fff; box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
+
+/* Maßlinien-Enden: kompakte zusätzliche Zeichenoptionen */
+#dimensionEndStyle { min-width: 9.5rem; }
+#dimensionEndSize { max-width: 10rem; }
+
+/* Zusätzlicher Text vor und hinter einer Maßzahl */
+.dimension-label-extra { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+.dimension-label-extra label { display:flex; flex-direction:column; gap:5px; font-size:0.88rem; }
+.dimension-label-extra input { width:100%; min-width:0; box-sizing:border-box; }
+@media (max-width:420px) { .dimension-label-extra { grid-template-columns:1fr; } }
+
+/* FotoMaß: Maßlinien-Endstil immer direkt erreichbar, nicht in den erweiterten Werkzeugen versteckt */
+.dimension-style-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:10px 0; padding:10px; border:1px solid var(--border, #cbd5e1); border-radius:10px; background:var(--panel, rgba(127,127,127,.06)); }
+.dimension-style-row label { display:flex; flex-direction:column; gap:4px; font-size:.9rem; }
+.dimension-style-row .dimension-extension-label { flex-direction:row; align-items:center; }
+.dimension-style-title { flex-basis:100%; font-size:.95rem; }
+.dimension-style-row select { min-width:10rem; }
+.dimension-style-row #applyDimensionStyle { max-width:16rem; white-space:normal; }
+
+/* FotoMaß: Die maßbasierte Skizze gehört ausschließlich in die Skizzenansicht. */
+.dimension-tools { display: none !important; }
+body.sketch-mode .dimension-tools { display: block !important; }

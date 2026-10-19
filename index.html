@@ -89,6 +89,23 @@
           </div>
         </details>
         <div class="button-row" style="margin-top:8px"><button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button></div>
+        <div class="dimension-style-row" aria-label="Maßlinien-Darstellung">
+          <strong class="dimension-style-title">Maßlinien</strong>
+          <label>Enden
+            <select id="dimensionEndStyle">
+              <option value="slash" selected>45°-Schrägstriche</option>
+              <option value="filled">Gefüllte Pfeile</option>
+              <option value="open">Offene Pfeile</option>
+              <option value="hollow">Hohle Pfeile</option>
+              <option value="dot">Punkte</option>
+              <option value="tick">Querstriche</option>
+            </select>
+          </label>
+          <label>Endgröße <input id="dimensionEndSize" type="range" min="5" max="20" value="10"></label>
+          <label class="dimension-extension-label"><input id="dimensionExtensionLines" type="checkbox" checked> Maßhilfslinien</label>
+          <button id="applyDimensionStyle" class="secondary compact" type="button" disabled>Stil auf ausgewählte Maßlinie anwenden</button>
+        </div>
+
         <details class="tool-details advanced-details">
           <summary>Bild einfügen &amp; Zeichenoptionen</summary>
           <div class="advanced-tools">
@@ -103,6 +120,7 @@
         <div class="settings-row">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
           <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
+
           <label>Schrift <input id="fontSizeInput" type="range" min="10" max="40" value="24"></label>
           <label class="text-bg-label"><input id="textBgToggle" type="checkbox" checked> Textfläche</label>
           <label>Einheit
