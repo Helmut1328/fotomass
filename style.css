@@ -546,3 +546,7 @@ button.secondary{background:#f5f8fa}
 }
 body.sketch-mode #canvasWrap { background-color: #f7f9fc; }
 body.sketch-mode #editorCanvas { background: #fff; box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
+
+/* Maßlinien-Enden: kompakte zusätzliche Zeichenoptionen */
+#dimensionEndStyle { min-width: 9.5rem; }
+#dimensionEndSize { max-width: 10rem; }
