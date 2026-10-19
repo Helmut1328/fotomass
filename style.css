@@ -373,9 +373,6 @@ footer { text-align: center; padding: 4px 12px 18px; font-size: .78rem; }
   margin-bottom: 8px;
 }
 .value-row { display: flex; gap: 8px; margin-bottom: 6px; }
-.value-label-extras { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 8px 0; }
-.value-label-extras label { margin: 2px 0 0; font-size: .85rem; }
-.value-label-extras input { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 16px; background: var(--bg); color: var(--ink); }
 .value-row input { flex: 1; min-width: 0; margin-bottom: 0 !important; font-size: 22px !important; font-weight: 600; }
 .value-row select { min-height: 48px; }
 .value-row .mic-btn {
@@ -549,13 +546,3 @@ button.secondary{background:#f5f8fa}
 }
 body.sketch-mode #canvasWrap { background-color: #f7f9fc; }
 body.sketch-mode #editorCanvas { background: #fff; box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
-
-/* Maßlinien-Enden: kompakte zusätzliche Zeichenoptionen */
-#dimensionEndStyle { min-width: 9.5rem; }
-#dimensionEndSize { max-width: 10rem; }
-
-/* Zusätzlicher Text vor und hinter einer Maßzahl */
-.dimension-label-extra { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
-.dimension-label-extra label { display:flex; flex-direction:column; gap:5px; font-size:0.88rem; }
-.dimension-label-extra input { width:100%; min-width:0; box-sizing:border-box; }
-@media (max-width:420px) { .dimension-label-extra { grid-template-columns:1fr; } }
