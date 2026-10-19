@@ -261,6 +261,7 @@
     const s = Math.min(1, MAX_SIDE / Math.max(nw, nh));
     baseCanvas.width = canvas.width = Math.max(1, Math.round(nw * s));
     baseCanvas.height = canvas.height = Math.max(1, Math.round(nh * s));
+    canvasWrap.style.setProperty("--photo-aspect", `${baseCanvas.width} / ${baseCanvas.height}`);
     baseCanvas.getContext("2d").drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
     photoLoaded = true;
     canvas.style.display = "block";
@@ -407,18 +408,22 @@
     // Technische Maßhilfslinien: vom Endpunkt leicht über die Maßlinie hinaus.
     // Da die vorhandenen Messobjekte keine separaten Objektkanten speichern,
     // werden die Hilfslinien als kurze, einheitliche Verlängerungen dargestellt.
-    if (dimensionExtensionLines && dimensionExtensionLines.checked) {
-      const len = Math.max(10 * k, (Number(dimensionEndSize.value) || 10) * 1.5 * k);
-      const nx = -Math.sin(angle);
-      const ny = Math.cos(angle);
+    const showExtensions = m.extensionLines !== undefined
+      ? !!m.extensionLines
+      : !!(dimensionExtensionLines && dimensionExtensionLines.checked);
+    if (showExtensions) {
+      const ax1 = Number.isFinite(m.baseX1) ? m.baseX1 : m.x1;
+      const ay1 = Number.isFinite(m.baseY1) ? m.baseY1 : m.y1;
+      const ax2 = Number.isFinite(m.baseX2) ? m.baseX2 : m.x2;
+      const ay2 = Number.isFinite(m.baseY2) ? m.baseY2 : m.y2;
       g.save();
       g.strokeStyle = color;
       g.lineWidth = Math.max(1, 1.25 * k);
-      g.globalAlpha = 0.78;
-      [[m.x1, m.y1], [m.x2, m.y2]].forEach(([x, y]) => {
+      g.globalAlpha = 0.82;
+      [[ax1, ay1, m.x1, m.y1], [ax2, ay2, m.x2, m.y2]].forEach(([x1, y1, x2, y2]) => {
         g.beginPath();
-        g.moveTo(x - nx * 3 * k, y - ny * 3 * k);
-        g.lineTo(x + nx * len, y + ny * len);
+        g.moveTo(x1, y1);
+        g.lineTo(x2, y2);
         g.stroke();
       });
       g.restore();
@@ -2113,7 +2118,7 @@
     let newMeasureId = null;
     if (a.type === "measure" || a.type === "reference") {
       const isRef = a.type === "reference";
-      const m = { id: a.id, type: isRef ? "reference" : "linear", isReference: isRef, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked, autoCalculated: false };
+      const m = { id: a.id, type: isRef ? "reference" : "linear", isReference: isRef, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, baseX1: a.x1, baseY1: a.y1, baseX2: a.x2, baseY2: a.y2, extensionLines: dimensionExtensionLines.checked, endStyle: dimensionEndStyle.value, endSize: Number(dimensionEndSize.value) || 10, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked, autoCalculated: false };
       if (!isRef) {
         const value = calculatedValueFor(m, m.unit);
         if (value !== null) { m.value = value; m.autoCalculated = true; }

@@ -568,3 +568,13 @@ body.sketch-mode #editorCanvas { background: #fff; box-shadow: 0 2px 12px rgba(1
 /* FotoMaß: Die maßbasierte Skizze gehört ausschließlich in die Skizzenansicht. */
 .dimension-tools { display: none !important; }
 body.sketch-mode .dimension-tools { display: block !important; }
+
+/* FotoMaß: Fotoansicht ohne schwarze Letterbox-Flächen */
+.canvas-wrap {
+  background: #fff;
+  height: auto;
+  aspect-ratio: var(--photo-aspect, 4 / 3);
+  max-height: 68vh;
+  min-height: 220px;
+}
+.canvas-wrap .viewport { background: #fff; }
