@@ -1473,6 +1473,9 @@
         m.autoCalculated = false;
         recalculateAutomaticMeasures();
       }
+      // Wichtig: isNew zurücksetzen, bevor closeValueDialog läuft –
+      // sonst würde der Cancel-Pfad die gerade bestätigte Maßlinie per Undo wieder entfernen.
+      dlg.isNew = false;
       refresh();
     }
     closeValueDialog();

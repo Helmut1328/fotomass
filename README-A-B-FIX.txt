@@ -44,3 +44,11 @@ BETROFFENE DATEIEN
 - storage.js
 - style.css
 - service-worker.js
+
+HOTFIX v24 (Maßlinien wieder sichtbar)
+--------------------------------------
+Fehler: Nach „Übernehmen“ im Werte-Dialog hat closeValueDialog die neue
+Maßlinie per Undo wieder entfernt, weil dlg.isNew noch true war.
+
+Korrektur: Bei erfolgreichem commitValue wird dlg.isNew = false gesetzt,
+bevor der Dialog geschlossen wird. Abbrechen verwirft weiterhin die Linie.
