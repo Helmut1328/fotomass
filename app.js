@@ -844,10 +844,30 @@
     const x2 = x1 + rw, y2 = y1 + rh;
     remember();
     const id = nextId++;
-    drawings.push({ id, type: "rect", x1, y1, x2, y2, color: colorInput.value || "#ff3b30", width: Number(widthInput.value) || 4, fill: false, fillOpacity: 1, rotation: 0 });
+    const col = colorInput.value || "#ff3b30";
+    const endSt = dimensionEndStyle.value || "slash";
+    const endSz = Number(dimensionEndSize.value) || 10;
+    const extOn = dimensionExtensionLines.checked;
+    drawings.push({ id, type: "rect", x1, y1, x2, y2, color: col, width: Number(widthInput.value) || 4, fill: false, fillOpacity: 1, rotation: 0 });
     const offset = Math.max(28, Math.min(canvas.width, canvas.height) * 0.045);
-    measures.push({ id: nextId++, x1, y1: y2 + offset, x2, y2: y2 + offset, type: "linear", value: String(Math.round(wMm * 100) / 100), unit: " mm", color: colorInput.value || "#ff3b30", textBg: true, locked: false, labelLocked: false, labelOffsetX: 0, labelOffsetY: 0 });
-    measures.push({ id: nextId++, x1: x1 - offset, y1, x2: x1 - offset, y2, type: "linear", value: String(Math.round(hMm * 100) / 100), unit: " mm", color: colorInput.value || "#ff3b30", textBg: true, locked: false, labelLocked: false, labelOffsetX: 0, labelOffsetY: 0 });
+    // Breite: Maßlinie unter dem Rechteck, Hilfslinien von der Unterkante
+    measures.push({
+      id: nextId++, x1, y1: y2 + offset, x2, y2: y2 + offset,
+      baseX1: x1, baseY1: y2, baseX2: x2, baseY2: y2,
+      type: "linear", value: String(Math.round(wMm * 100) / 100), unit: " mm",
+      color: col, textBg: true, locked: false, labelLocked: false,
+      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "", labelSuffix: "",
+      endStyle: endSt, endSize: endSz, extensionLines: extOn
+    });
+    // Höhe: Maßlinie links vom Rechteck, Hilfslinien von der linken Kante
+    measures.push({
+      id: nextId++, x1: x1 - offset, y1, x2: x1 - offset, y2,
+      baseX1: x1, baseY1: y1, baseX2: x1, baseY2: y2,
+      type: "linear", value: String(Math.round(hMm * 100) / 100), unit: " mm",
+      color: col, textBg: true, locked: false, labelLocked: false,
+      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "", labelSuffix: "",
+      endStyle: endSt, endSize: endSz, extensionLines: extOn
+    });
     sketchScalePxPerMm = pxPerMm; selectedDrawingId = id; selectedId = null;
     refresh(); setStatus(`Rechteck erstellt: ${wMm} × ${hMm} mm. Maße sind als Zeichnungswerte gespeichert.`);
   });
@@ -1412,8 +1432,23 @@
 
   function closeValueDialog() {
     stopSpeech();
+    // Neue Maßlinie bei „Abbrechen“ verwerfen (noch kein bestätigter Wert)
+    if (dlg.isNew && dlg.id != null) {
+      const had = measures.some((x) => x.id === dlg.id);
+      if (had) {
+        // Undo stellt den Zustand vor dem Einfügen wieder her und entfernt die leere Linie
+        if (history.length) undo();
+        else {
+          measures = measures.filter((x) => x.id !== dlg.id);
+          if (selectedId === dlg.id) selectedId = null;
+          refresh();
+        }
+        setStatus("Maßlinie verworfen.");
+      }
+    }
     closeDialog(valueDialog);
     dlg.id = null;
+    dlg.isNew = false;
     pendingFocus = false;
   }
 
@@ -1834,7 +1869,7 @@
         selectedId = hit.measure.id;
         syncQuickMeasureLock();
         activeDrawing = hit.endpoint
-          ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false, changed: false, armed }
+          ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2, x3: hit.measure.x3, y3: hit.measure.y3 } }
           : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2, x3: hit.measure.x3, y3: hit.measure.y3 } };
         // langes Drücken ohne Bewegen -> Menü
         cancelLongPress();
@@ -2039,7 +2074,20 @@
       activeDrawing.changed = true;
       const sn = findSnap(p, m.id);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
-      if (activeDrawing.endpoint === 1) { m.x1 = p.x; m.y1 = p.y; } else if (activeDrawing.endpoint === 3 && m.type === "angle") { m.x3 = p.x; m.y3 = p.y; } else { m.x2 = p.x; m.y2 = p.y; }
+      if (activeDrawing.endpoint === 1) {
+        m.x1 = p.x; m.y1 = p.y;
+        // Basispunkt mitziehen, wenn er bisher am Endpunkt lag (oder noch nicht gesetzt war)
+        if (!Number.isFinite(m.baseX1) || (m.baseX1 === activeDrawing.original.x1 && m.baseY1 === activeDrawing.original.y1)) {
+          m.baseX1 = p.x; m.baseY1 = p.y;
+        }
+      } else if (activeDrawing.endpoint === 3 && m.type === "angle") {
+        m.x3 = p.x; m.y3 = p.y;
+      } else {
+        m.x2 = p.x; m.y2 = p.y;
+        if (!Number.isFinite(m.baseX2) || (m.baseX2 === activeDrawing.original.x2 && m.baseY2 === activeDrawing.original.y2)) {
+          m.baseX2 = p.x; m.baseY2 = p.y;
+        }
+      }
       if (m.type === "angle") m.value = (Math.abs(angleRadians(m))*180/Math.PI).toFixed(1);
       else if (m.autoCalculated) { const value = calculatedValueFor(m, m.unit); if (value !== null) m.value = value; }
       if (m.isReference) recalculateAutomaticMeasures();

@@ -9,7 +9,7 @@
   --danger: #a52a2a;
   --handle: #1682d5;
   --snap: #00c853;
-  --canvas-h: min(58vh, 480px);
+  --canvas-h: min(68vh, 640px);
 }
 
 * { box-sizing: border-box; }
@@ -420,7 +420,7 @@ button.big { width: 100%; min-height: 52px; font-size: 1.05rem; }
 .project-row button { min-height: 40px; }
 
 @media (min-width: 650px) {
-  :root { --canvas-h: min(68vh, 600px); }
+  :root { --canvas-h: min(70vh, 720px); }
   main { padding: 12px; }
   .tool-grid { grid-template-columns: repeat(7, 1fr); }
 }
@@ -471,43 +471,67 @@ body { padding-top: 0; }
 .text-edit-options .inline-check input { width: 20px; height: 20px; }
 
 
-/* FotoMaß Design C – minimalistisch, kompakte Werkzeugleiste */
-:root{--bg:#f3f6f8;--panel:#fff;--ink:#172b3a;--muted:#637585;--line:#dce5eb;--accent:#176b87;--danger:#b83232;--handle:#1682d5;--snap:#00a878;--canvas-h:min(62vh,560px)}
+/* FotoMaß Design C – maximaler Canvas, klare Primärwerkzeuge */
+:root{--bg:#f3f6f8;--panel:#fff;--ink:#172b3a;--muted:#637585;--line:#dce5eb;--accent:#176b87;--danger:#b83232;--handle:#1682d5;--snap:#00a878;--canvas-h:min(68vh,640px)}
 body{font-size:15px;line-height:1.42;background:var(--bg)}
-.topbar{position:sticky;top:0;z-index:30;padding:max(10px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 10px max(14px,env(safe-area-inset-left));background:#152536;box-shadow:0 2px 10px rgba(16,35,50,.12)}
-.topbar h1{font-size:1.18rem;letter-spacing:-.025em}
-main{width:min(980px,100%);padding:10px;gap:10px}
-.panel{border-radius:14px;padding:12px;box-shadow:0 2px 8px rgba(22,48,65,.035)}
-.compact-panel{padding:10px 12px}
+.topbar{position:sticky;top:0;z-index:30;padding:max(8px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) 8px max(12px,env(safe-area-inset-left));background:#152536;box-shadow:0 2px 10px rgba(16,35,50,.12)}
+.topbar h1{font-size:1.12rem;letter-spacing:-.025em}
+main{width:min(980px,100%);padding:8px;gap:8px}
+.panel{border-radius:12px;padding:10px;box-shadow:0 2px 8px rgba(22,48,65,.035)}
+.compact-panel{padding:8px 10px}
 button,.file-button{border-radius:10px;font-weight:650}
 button.secondary{background:#f5f8fa}
-.photo-buttons .file-button{min-height:46px}
-.editor-panel{padding:10px}
-.canvas-wrap{border-radius:12px;border-color:#cbd7df}
-.zoom-bar{margin-top:7px;gap:5px}
-.toolbox{margin-top:10px;display:grid;gap:8px}
+.photo-buttons .file-button{min-height:44px}
+.editor-panel{padding:8px}
+.canvas-wrap{border-radius:10px;border-color:#cbd7df}
+.zoom-bar{margin-top:6px;gap:4px}
+.touch-hint{margin:3px 0 0;font-size:.72rem;line-height:1.3}
+.toolbox{margin-top:8px;display:grid;gap:6px}
 .tool-grid{gap:6px}
 .primary-tools{grid-template-columns:repeat(3,minmax(0,1fr))}
+.primary-tools .tool{min-height:52px;font-size:.9rem;font-weight:700;background:#eef5f8;border-color:#b8d0da}
+.primary-tools .tool.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .tool{min-height:46px;padding:7px 5px;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:.84rem;white-space:nowrap}
 .tool-details{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--panel)}
-.tool-details>summary{cursor:pointer;list-style:none;padding:11px 12px;min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:.88rem;font-weight:650;color:var(--ink);-webkit-tap-highlight-color:transparent}
+.tool-details>summary{cursor:pointer;list-style:none;padding:10px 12px;min-height:42px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:.86rem;font-weight:650;color:var(--ink);-webkit-tap-highlight-color:transparent}
 .tool-details>summary::-webkit-details-marker{display:none}
-.tool-details>summary::after{content:"＋";color:var(--accent);font-size:1.1rem}
+.tool-details>summary::after{content:"＋";color:var(--accent);font-size:1.05rem}
 .tool-details[open]>summary::after{content:"−"}
-.summary-hint{color:var(--muted);font-size:.72rem;font-weight:450;text-align:right}
+.summary-hint{color:var(--muted);font-size:.7rem;font-weight:450;text-align:right}
 .secondary-tools{grid-template-columns:repeat(3,minmax(0,1fr));padding:0 8px 8px}
 .advanced-tools{padding:0 10px 10px}
 .advanced-details .image-tools{margin-top:0}
-.settings-row{gap:10px 14px}
+.settings-row{gap:8px 12px}
 .settings-row label{font-size:.84rem}
-.action-row{gap:7px}
-.button-row.action-row button{min-height:44px;border-radius:10px}
-.section-heading{margin-bottom:10px}
+.action-row{gap:6px}
+.button-row.action-row button{min-height:42px;border-radius:10px}
+.section-heading{margin-bottom:8px}
 .measure-item{border-radius:11px;padding:7px}
 .dialog{background:rgba(12,27,39,.55);backdrop-filter:blur(3px)}
 .dialog-box{border:1px solid rgba(220,229,235,.85);border-radius:16px}
-@media(max-width:420px){main{padding:7px;gap:8px}.panel{padding:9px;border-radius:12px}.topbar{gap:6px}#styleToggle{font-size:.78rem;padding:5px 8px}.tool{font-size:.8rem;min-height:44px}.summary-hint{max-width:52%}.action-row{flex-wrap:wrap}.action-row button{min-width:calc(50% - 4px)}.settings-row{gap:9px 12px}}
-@media(min-width:650px){main{padding:14px;gap:12px}.editor-panel{padding:14px}.secondary-tools{grid-template-columns:repeat(6,minmax(0,1fr))}}
+.dimension-style-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:6px 0 2px;font-size:.84rem}
+.dimension-style-title{font-size:.82rem;font-weight:700;color:var(--muted);width:100%}
+/* iPhone / schmale Geräte: noch mehr Canvas, kompaktere Bedienung */
+@media(max-width:420px){
+  :root{--canvas-h:min(72vh,620px)}
+  main{padding:6px;gap:6px}
+  .panel{padding:8px;border-radius:11px}
+  .compact-panel{padding:7px 8px}
+  .editor-panel{padding:6px}
+  .topbar{gap:6px;padding:max(6px,env(safe-area-inset-top)) 10px 6px}
+  .topbar h1{font-size:1.05rem}
+  #styleToggle{font-size:.75rem;padding:4px 7px;min-height:32px}
+  .primary-tools .tool{min-height:50px;font-size:.86rem}
+  .tool{font-size:.78rem;min-height:42px}
+  .summary-hint{max-width:48%;font-size:.66rem}
+  .action-row{flex-wrap:wrap}
+  .action-row button{min-width:calc(50% - 4px)}
+  .settings-row{gap:8px 10px}
+  .touch-hint{display:none}
+  .zoom-bar{margin-top:4px}
+  .toolbox{margin-top:6px;gap:5px}
+}
+@media(min-width:650px){main{padding:14px;gap:12px}.editor-panel{padding:14px}.secondary-tools{grid-template-columns:repeat(6,minmax(0,1fr))}:root{--canvas-h:min(70vh,720px)}}
 
 
 /* FotoMaß 2D-Skizze – Erweiterungen */

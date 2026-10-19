@@ -154,19 +154,33 @@
 
     const measures = (Array.isArray(raw.measures) ? raw.measures : []).slice(0, 2000)
       .filter((m) => m && [m.x1, m.y1, m.x2, m.y2].every(isNum))
-      .map((m, i) => ({
-        id: isNum(m.id) ? m.id : 100000 + i,
-        x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2,
-        x3: isNum(m.x3) ? m.x3 : undefined, y3: isNum(m.y3) ? m.y3 : undefined,
-        type: m.type === "angle" && isNum(m.x3) && isNum(m.y3) ? "angle" : (m.type === "reference" ? "reference" : "linear"),
-        isReference: m.isReference === true || m.type === "reference",
-        autoCalculated: m.autoCalculated === true,
-        value: cleanValue(m.value), unit: unitOr(m.unit), color: colorOr(m.color), textBg: m.textBg !== false,
-        label: cleanText(m.label, 40), locked: m.locked === true,
-        labelLocked: m.labelLocked === true,
-        labelOffsetX: isNum(m.labelOffsetX) ? m.labelOffsetX : 0,
-        labelOffsetY: isNum(m.labelOffsetY) ? m.labelOffsetY : 0
-      }));
+      .map((m, i) => {
+        const out = {
+          id: isNum(m.id) ? m.id : 100000 + i,
+          x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2,
+          x3: isNum(m.x3) ? m.x3 : undefined, y3: isNum(m.y3) ? m.y3 : undefined,
+          type: m.type === "angle" && isNum(m.x3) && isNum(m.y3) ? "angle" : (m.type === "reference" ? "reference" : "linear"),
+          isReference: m.isReference === true || m.type === "reference",
+          autoCalculated: m.autoCalculated === true,
+          value: cleanValue(m.value), unit: unitOr(m.unit), color: colorOr(m.color), textBg: m.textBg !== false,
+          label: cleanText(m.label, 40), locked: m.locked === true,
+          labelLocked: m.labelLocked === true,
+          labelOffsetX: isNum(m.labelOffsetX) ? m.labelOffsetX : 0,
+          labelOffsetY: isNum(m.labelOffsetY) ? m.labelOffsetY : 0,
+          // Individuelle Maßlinien-Darstellung und Beschriftung (Format 11+)
+          labelPrefix: cleanText(m.labelPrefix, 24),
+          labelSuffix: cleanText(m.labelSuffix, 24),
+          endStyle: typeof m.endStyle === "string" && ["slash", "filled", "open", "hollow", "dot", "tick"].includes(m.endStyle) ? m.endStyle : undefined,
+          endSize: isNum(m.endSize) ? Math.max(5, Math.min(20, m.endSize)) : undefined,
+          extensionLines: typeof m.extensionLines === "boolean" ? m.extensionLines : undefined
+        };
+        // Basispunkte der Maßhilfslinien (ursprüngliche Bezugspunkte)
+        if (isNum(m.baseX1)) out.baseX1 = m.baseX1;
+        if (isNum(m.baseY1)) out.baseY1 = m.baseY1;
+        if (isNum(m.baseX2)) out.baseX2 = m.baseX2;
+        if (isNum(m.baseY2)) out.baseY2 = m.baseY2;
+        return out;
+      });
 
     const drawings = (Array.isArray(raw.drawings) ? raw.drawings : []).slice(0, 5000)
       .filter((d) => d && ["freehand", "line", "rect", "text", "image"].includes(d.type))
@@ -213,6 +227,9 @@
       unit: unitOr(raw.unit),
       snap: typeof raw.snap === "boolean" ? raw.snap : true,
       fontSize: Math.min(48, Math.max(8, isNum(raw.fontSize) ? raw.fontSize : 24)),
+      dimensionEndStyle: typeof raw.dimensionEndStyle === "string" && ["slash", "filled", "open", "hollow", "dot", "tick"].includes(raw.dimensionEndStyle) ? raw.dimensionEndStyle : "slash",
+      dimensionEndSize: isNum(raw.dimensionEndSize) ? Math.max(5, Math.min(20, raw.dimensionEndSize)) : 10,
+      dimensionExtensionLines: raw.dimensionExtensionLines !== false,
       thumb: typeof raw.thumb === "string" && raw.thumb.startsWith("data:image/") && raw.thumb.length < 200e3 ? raw.thumb : "",
       deletedAt: null
     };
