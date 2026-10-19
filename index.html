@@ -227,6 +227,12 @@
   <div id="valueDialog" class="dialog" hidden>
     <div class="dialog-box">
       <label for="valueDialogInput" id="valueDialogTitle">Maßwert</label>
+      <div class="value-label-options">
+        <label for="dimensionPrefix">Text davor (optional)</label>
+        <input id="dimensionPrefix" type="text" maxlength="24" placeholder="z. B. lichte Weite">
+        <label for="dimensionSuffix">Text danach (optional)</label>
+        <input id="dimensionSuffix" type="text" maxlength="24" placeholder="z. B. Bestand">
+      </div>
       <div class="value-row">
         <input id="valueDialogInput" type="text" inputmode="decimal" placeholder="z. B. 1234" autocomplete="off" enterkeyhint="done">
         <select id="valueDialogUnit" aria-label="Einheit">

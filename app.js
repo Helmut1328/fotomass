@@ -460,7 +460,7 @@
       }
     });
 
-    const label = `${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
+    const label = `${m.labelPrefix ? m.labelPrefix + " " : ""}${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}${m.labelSuffix ? " " + m.labelSuffix : ""}`;
     g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
     const tw = g.measureText(label).width;
     const th = fs + 6 * k;
@@ -631,7 +631,7 @@
     // Beschriftung vor der Linie prüfen, damit sie unabhängig verschoben werden kann.
     for (let i=measures.length-1;i>=0;i--) {
       const m=measures[i], pos=measureLabelPosition(m);
-      const label=m.type==="angle" ? `${fmt(m.value)}°` : `${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
+      const label=m.type==="angle" ? `${fmt(m.value)}°` : `${m.labelPrefix ? m.labelPrefix + " " : ""}${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}${m.labelSuffix ? " " + m.labelSuffix : ""}`;
       const fs=getFontSize()*K(); ctx.save(); ctx.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
       const halfW=ctx.measureText(label).width/2+scr(12), halfH=fs/2+scr(10); ctx.restore();
       if(Math.abs(p.x-pos.x)<=halfW && Math.abs(p.y-pos.y)<=halfH) return {measure:m,endpoint:0,label:true};
@@ -1389,6 +1389,8 @@
     dlg.isNew = !!opts.isNew;
     $("valueDialogTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1} – Wert`;
     vInput.value = fmt(m.value);
+    $("dimensionPrefix").value = m.labelPrefix || "";
+    $("dimensionSuffix").value = m.labelSuffix || "";
     vUnit.value = m.unit || " mm";
     vInput.inputMode = "decimal";
     $("keyboardToggle").textContent = "⌨ Text-Tastatur (für iPhone-Diktat)";
@@ -1421,6 +1423,8 @@
       const p = speech.parseNumber(vInput.value, { typed: true });
       if (!dlg.isNew) remember(); // neue Linie: Rückgängig entfernt Linie samt Wert in einem Schritt
       m.value = p.value;
+      m.labelPrefix = $("dimensionPrefix").value.trim();
+      m.labelSuffix = $("dimensionSuffix").value.trim();
       m.unit = p.unit || vUnit.value || " mm";
       if (m.isReference || m.type === "reference") {
         m.isReference = true;
@@ -1756,6 +1760,17 @@
     }
   });
   fontSizeInput.addEventListener("input", () => { draw(); scheduleAutosave(); });
+  $("applyDimensionStyle").disabled = false;
+  $("applyDimensionStyle").addEventListener("click", () => {
+    const m = measures.find((x) => x.id === selectedId);
+    if (!m) { toast("Bitte zuerst eine Maßlinie auswählen."); return; }
+    remember();
+    m.endStyle = dimensionEndStyle.value;
+    m.endSize = Number(dimensionEndSize.value) || 10;
+    m.extensionLines = dimensionExtensionLines.checked;
+    refresh();
+    toast("Stil auf ausgewählte Maßlinie angewendet.");
+  });
   dimensionEndStyle.addEventListener("change", () => { draw(); scheduleAutosave(); });
   dimensionEndSize.addEventListener("input", () => { draw(); scheduleAutosave(); });
   dimensionExtensionLines.addEventListener("change", () => { draw(); scheduleAutosave(); });
