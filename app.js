@@ -392,6 +392,13 @@
     return {x:(m.x1+m.x2)/2+Math.sin(textAngle)*offset+(m.labelOffsetX||0),y:(m.y1+m.y2)/2-Math.cos(textAngle)*offset+(m.labelOffsetY||0)};
   }
 
+  function dimensionLabelText(m) {
+    const prefix = String(m.labelPrefix || "");
+    const suffix = String(m.labelSuffix || "");
+    if (m.type === "angle") return `${prefix}${fmt(m.value)}°${suffix}`;
+    return `${prefix}${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}${suffix}`;
+  }
+
   function drawMeasure(g, m, k, forExport) {
     const chosen = !forExport && m.id === selectedId;
     if (m.type === "angle") { drawAngleMeasure(g, m, k, chosen); return; }
@@ -455,7 +462,7 @@
       }
     });
 
-    const label = `${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
+    const label = dimensionLabelText(m);
     g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
     const tw = g.measureText(label).width;
     const th = fs + 6 * k;
@@ -503,7 +510,7 @@
     g.beginPath(); g.moveTo(m.x1,m.y1); g.lineTo(m.x2,m.y2); g.moveTo(m.x1,m.y1); g.lineTo(m.x3,m.y3); g.stroke();
     g.beginPath(); g.arc(m.x1,m.y1,radius,a1,a2,delta<0); g.stroke();
     const mid=a1+delta/2, tx=m.x1+Math.cos(mid)*(radius+12*k)+(m.labelOffsetX||0), ty=m.y1+Math.sin(mid)*(radius+12*k)+(m.labelOffsetY||0);
-    const label=`${fmt(m.value)}°`; g.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
+    const label=dimensionLabelText(m); g.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
     const tw=g.measureText(label).width, th=fs+6*k;
     if (m.textBg !== false) { g.fillStyle="rgba(255,255,255,0.93)"; g.fillRect(tx-tw/2-5*k,ty-th/2-2*k,tw+10*k,th+4*k); }
     g.fillStyle=color; g.textAlign="center"; g.textBaseline="middle"; g.fillText(label,tx,ty);
@@ -626,7 +633,7 @@
     // Beschriftung vor der Linie prüfen, damit sie unabhängig verschoben werden kann.
     for (let i=measures.length-1;i>=0;i--) {
       const m=measures[i], pos=measureLabelPosition(m);
-      const label=m.type==="angle" ? `${fmt(m.value)}°` : `${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}`;
+      const label=dimensionLabelText(m);
       const fs=getFontSize()*K(); ctx.save(); ctx.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
       const halfW=ctx.measureText(label).width/2+scr(12), halfH=fs/2+scr(10); ctx.restore();
       if(Math.abs(p.x-pos.x)<=halfW && Math.abs(p.y-pos.y)<=halfH) return {measure:m,endpoint:0,label:true};
@@ -1385,6 +1392,8 @@
     $("valueDialogTitle").textContent = `${m.isReference ? "Referenzmaß" : (m.type === "angle" ? "Winkel" : "Maß")} ${measures.indexOf(m) + 1} – Wert`;
     vInput.value = fmt(m.value);
     vUnit.value = m.unit || " mm";
+    $("dimensionPrefix").value = m.labelPrefix || "";
+    $("dimensionSuffix").value = m.labelSuffix || "";
     vInput.inputMode = "decimal";
     $("keyboardToggle").textContent = "⌨ Text-Tastatur (für iPhone-Diktat)";
     const st = speech.status();
@@ -1417,6 +1426,8 @@
       if (!dlg.isNew) remember(); // neue Linie: Rückgängig entfernt Linie samt Wert in einem Schritt
       m.value = p.value;
       m.unit = p.unit || vUnit.value || " mm";
+      m.labelPrefix = $("dimensionPrefix").value || "";
+      m.labelSuffix = $("dimensionSuffix").value || "";
       if (m.isReference || m.type === "reference") {
         m.isReference = true;
         m.type = "reference";
@@ -1435,7 +1446,20 @@
   }
 
   $("valueDialogOk").addEventListener("click", commitValue);
-  $("valueDialogCancel").addEventListener("click", closeValueDialog);
+  $("valueDialogCancel").addEventListener("click", () => {
+    const wasNew = dlg.isNew;
+    const id = dlg.id;
+    closeValueDialog();
+    if (wasNew && id != null) {
+      const index = measures.findIndex((m) => m.id === id);
+      if (index >= 0) {
+        measures.splice(index, 1);
+        if (selectedId === id) selectedId = null;
+        refresh();
+        setStatus("Neue Maßlinie verworfen.");
+      }
+    }
+  });
   vMic.addEventListener("click", () => {
     if (dlg.listener) { stopSpeech(); vHint.textContent = "Gestoppt – tippen oder nochmal 🎤."; }
     else startSpeech();
