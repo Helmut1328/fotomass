@@ -697,3 +697,43 @@ body:not(.sketch-mode) .cad-grid-mm { opacity: .55; }
   width: min(140px, 40vw);
   min-height: 32px;
 }
+
+/* Maßkette */
+.chain-actions {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.chain-status {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(23, 107, 135, 0.12);
+  color: #176b87;
+  font-weight: 650;
+  font-size: .9rem;
+}
+.chain-actions button { min-height: 42px; }
+.measure-chain-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(23, 107, 135, 0.1);
+  font-size: .9rem;
+}
+.measure-chain-header .chain-sum {
+  margin-left: auto;
+  font-weight: 800;
+  color: #176b87;
+}
+.measure-chain-seg {
+  border-left: 3px solid #176b87;
+  padding-left: 6px;
+}

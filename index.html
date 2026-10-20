@@ -85,7 +85,13 @@
         <div class="tool-grid primary-tools" aria-label="Hauptwerkzeuge">
           <button class="tool active" data-tool="select" type="button" title="Objekte auswählen und bearbeiten">↖ <span>Auswählen</span></button>
           <button class="tool" data-tool="measure" type="button" title="Neue Maßlinie zeichnen">＋ <span>Maß</span></button>
+          <button class="tool" data-tool="chain" type="button" title="Maßkette: Segmente aneinander, Summe wird angezeigt">⛓ <span>Kette</span></button>
           <button class="tool" data-tool="reference" type="button" title="Bekannte Strecke als Referenz festlegen">⚖ <span>Referenz</span></button>
+        </div>
+        <div class="button-row chain-actions" id="chainActions" hidden>
+          <p id="chainStatus" class="chain-status">Maßkette: erstes Segment ziehen</p>
+          <button id="chainFinish" type="button">✓ Kette fertig</button>
+          <button id="chainCancel" class="secondary" type="button">Abbrechen</button>
         </div>
         <div class="settings-row draw-style-row" aria-label="Zeichenstil">
           <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>

@@ -12,7 +12,7 @@
   const DB_VERSION = 2;
   const STORE_P = "projects";
   const STORE_PH = "photos";
-  const FORMAT_VERSION = 14;          // + Kreis, Polylinie, Skizzen-Maßstab 0 = inaktiv
+  const FORMAT_VERSION = 15;          // + Kreis, Polylinie, Skizzen-Maßstab 0 = inaktiv
   const TRASH_DAYS = 30;
   const UNITS = [" mm", " cm", " m", "°"];
 
@@ -173,7 +173,9 @@
           endStyle: typeof m.endStyle === "string" && ["slash", "filled", "open", "hollow", "dot", "tick"].includes(m.endStyle) ? m.endStyle : undefined,
           endSize: isNum(m.endSize) ? Math.max(5, Math.min(20, m.endSize)) : undefined,
           extensionLines: typeof m.extensionLines === "boolean" ? m.extensionLines : undefined,
-          layer: m.layer === "sketch" ? "sketch" : "photo"
+          layer: m.layer === "sketch" ? "sketch" : "photo",
+          chainId: isNum(m.chainId) ? m.chainId : undefined,
+          chainIndex: isNum(m.chainIndex) ? m.chainIndex : undefined
         };
         // Basispunkte der Maßhilfslinien (ursprüngliche Bezugspunkte)
         if (isNum(m.baseX1)) out.baseX1 = m.baseX1;

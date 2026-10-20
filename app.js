@@ -67,6 +67,7 @@
   let sketchCanvasW = SKETCH_DEFAULT_W;
   let sketchCanvasH = SKETCH_DEFAULT_H;
   let polylineDraft = null;   // laufende Polylinie { id, type, points, color, width, closed }
+  let chainSession = null;    // { chainId, lastX, lastY, count } – laufende Maßkette
   let orthoMode = false;      // CAD: nur waagrecht/senkrecht
   let gridEnabled = true;     // CAD: Raster in der Skizze
   let gridMm = 100;           // Rasterabstand in mm (wenn Maßstab aktiv), sonst 50 px
@@ -512,6 +513,8 @@
       g.restore();
     }
     layerMeasures.forEach((m) => drawMeasure(g, m, k, forExport));
+    // Gesamtmaße der Ketten (klar, groß)
+    drawChainTotals(g, k, forExport);
     if (forExport) return;
     if (tool === "angle" && anglePoints.length) {
       g.save(); g.strokeStyle = colorInput.value; g.fillStyle = colorInput.value; g.lineWidth = 2 * k;
@@ -621,6 +624,64 @@
     const fs=getFontSize()*K(), textAngle=dimensionTextAngle(m);
     const offset=fs*0.75;
     return {x:(m.x1+m.x2)/2+Math.sin(textAngle)*offset+(m.labelOffsetX||0),y:(m.y1+m.y2)/2-Math.cos(textAngle)*offset+(m.labelOffsetY||0)};
+  }
+
+  function drawChainTotals(g, k, forExport) {
+    const ids = [...new Set(visibleMeasures().filter((m) => m.chainId).map((m) => m.chainId))];
+    ids.forEach((cid) => {
+      const segs = chainSegments(cid);
+      if (segs.length < 1) return;
+      const tot = chainTotalMm(cid);
+      if (!tot) return;
+      // Position: Mitte der Kette (Schwerpunkt der Segmente)
+      let sx = 0, sy = 0;
+      segs.forEach((m) => { sx += (m.x1 + m.x2) / 2; sy += (m.y1 + m.y2) / 2; });
+      sx /= segs.length; sy /= segs.length;
+      // etwas unterhalb, damit Einzelmaße nicht überdeckt werden
+      const last = segs[segs.length - 1];
+      const ang = Math.atan2(last.y2 - last.y1, last.x2 - last.x1);
+      const ox = Math.cos(ang + Math.PI / 2) * (22 * k);
+      const oy = Math.sin(ang + Math.PI / 2) * (22 * k);
+      const label = segs.length > 1
+        ? `Σ ${fmt(tot.display)}${tot.unit}  (${tot.count}×)`
+        : `Σ ${fmt(tot.display)}${tot.unit}`;
+      const fs = Math.max(getFontSize() + 2, 14) * k;
+      g.save();
+      g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
+      const tw = g.measureText(label).width;
+      const th = fs + 8 * k;
+      const x = sx + ox, y = sy + oy;
+      g.fillStyle = "rgba(23, 107, 135, 0.95)";
+      g.strokeStyle = "#176b87";
+      g.lineWidth = Math.max(1, 1.5 * k);
+      const rx = x - tw / 2 - 8 * k, ry = y - th / 2;
+      g.beginPath();
+      const rr = 6 * k;
+      g.moveTo(rx + rr, ry);
+      g.arcTo(rx + tw + 16 * k, ry, rx + tw + 16 * k, ry + th, rr);
+      g.arcTo(rx + tw + 16 * k, ry + th, rx, ry + th, rr);
+      g.arcTo(rx, ry + th, rx, ry, rr);
+      g.arcTo(rx, ry, rx + tw + 16 * k, ry, rr);
+      g.closePath();
+      g.fill();
+      g.fillStyle = "#fff";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(label, x, y);
+      g.restore();
+      // Verbindungspunkte der Kette markieren
+      if (!forExport) {
+        segs.forEach((m, i) => {
+          if (i === 0) return;
+          g.save();
+          g.fillStyle = "#176b87";
+          g.beginPath();
+          g.arc(m.x1, m.y1, Math.max(3, 4 * k), 0, Math.PI * 2);
+          g.fill();
+          g.restore();
+        });
+      }
+    });
   }
 
   function drawMeasure(g, m, k, forExport) {
@@ -1027,14 +1088,40 @@
       list.append(p);
       return;
     }
-    layerMs.forEach((m, index) => {
+    // Ketten zuerst gruppiert, dann Einzelmaße
+    const shown = new Set();
+    const chainIds = [...new Set(layerMs.filter((m) => m.chainId).map((m) => m.chainId))];
+    chainIds.forEach((cid) => {
+      const segs = chainSegments(cid);
+      if (!segs.length) return;
+      const tot = chainTotalMm(cid);
+      const head = document.createElement("div");
+      head.className = "measure-chain-header";
+      head.innerHTML = `<strong>Maßkette</strong> <span>${segs.length} Teile</span>` +
+        (tot ? ` <span class="chain-sum">Σ ${fmt(tot.display)}${tot.unit}</span>` : "");
+      list.append(head);
+      segs.forEach((m, i) => {
+        shown.add(m.id);
+        appendMeasureRow(list, m, `K${i + 1}`);
+      });
+    });
+    let solo = 0;
+    layerMs.forEach((m) => {
+      if (shown.has(m.id)) return;
+      solo++;
+      appendMeasureRow(list, m, String(solo));
+    });
+  }
+
+  function appendMeasureRow(list, m, labelIndex) {
       const row = document.createElement("div");
-      row.className = "measure-item" + (m.id === selectedId ? " selected" : "");
+      row.className = "measure-item" + (m.id === selectedId ? " selected" : "") + (m.chainId ? " measure-chain-seg" : "");
 
       const title = document.createElement("button");
       title.type = "button";
       title.className = "secondary";
-      title.textContent = `${m.locked ? "🔒 " : ""}${m.isReference ? "Referenz" : (m.type === "angle" ? "Winkel" : "Maß")} ${index + 1}${m.autoCalculated ? " · berechnet" : ""}`;
+      const kind = m.isReference ? "Referenz" : (m.type === "angle" ? "Winkel" : (m.chainId ? "Kette" : "Maß"));
+      title.textContent = `${m.locked ? "🔒 " : ""}${kind} ${labelIndex}${m.autoCalculated ? " · berechnet" : ""}`;
       title.addEventListener("click", () => { selectedId = m.id; $("textBgToggle").checked = m.textBg !== false; setTool("select"); renderMeasureList(); draw(); });
 
       const input = document.createElement("input");
@@ -1052,6 +1139,7 @@
         m.autoCalculated = false;
         if (m.isReference) { calculateEmptyMeasuresFromReference(); }
         refresh();
+        syncChainActions();
       });
 
       const unit = document.createElement("span");
@@ -1074,7 +1162,6 @@
 
       row.append(title, input, unit, mic, del);
       list.append(row);
-    });
   }
 
   function deleteMeasure(id) {
@@ -1096,15 +1183,24 @@
       polylineDraft = null;
       syncPolylineActions();
     }
+    if (tool === "chain" && name !== "chain" && chainSession) {
+      // Offene Kette behalten (Segmente bleiben), Session beenden
+      finishChainSession(false);
+    }
     tool = name;
     document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
-    if ((name === "measure" || name === "reference") && unitSelect.value === "°") unitSelect.value = " mm";
+    if ((name === "measure" || name === "reference" || name === "chain") && unitSelect.value === "°") unitSelect.value = " mm";
     if (name === "angle") setStatus("Winkel: dreimal tippen – Scheitelpunkt, erster Schenkel, zweiter Schenkel.");
     if (name === "reference") setStatus("Referenzmaß: bekannte Strecke ziehen und echten Wert eingeben. Es gilt für dieselbe Bildebene.");
     if (name === "circle") setStatus("Kreis: Mittelpunkt tippen und Radius ziehen. Danach „Ø an Kreis“ für Durchmesser-Maß.");
     if (name === "arc") setStatus("Bogen: dreimal tippen – 1) Mittelpunkt, 2) Start, 3) Ende.");
     if (name === "polyline") setStatus("Polylinie: nacheinander Punkte tippen, dann „Polylinie fertig“.");
+    if (name === "chain") {
+      if (!chainSession) chainSession = { chainId: nextId++, lastX: null, lastY: null, count: 0 };
+      setStatus("Maßkette: erstes Segment ziehen. Weitere Segmente hängen am Endpunkt. Dann „Kette fertig“.");
+    }
     syncPolylineActions();
+    syncChainActions();
     syncDiameterButton();
     // Füllregler immer nutzbar (Vorgabe für neue Rechtecke bzw. Änderung des ausgewählten)
     if (typeof syncRectFillControls === "function") {
@@ -1124,6 +1220,84 @@
       const finish = $("polylineFinish");
       if (finish) finish.disabled = !(polylineDraft && polylineDraft.points && polylineDraft.points.length >= 2);
     }
+  }
+
+  // ---------- Maßkette ----------
+  function chainSegments(chainId) {
+    return visibleMeasures()
+      .filter((m) => m.chainId === chainId && m.type !== "angle")
+      .sort((a, b) => (a.chainIndex || 0) - (b.chainIndex || 0));
+  }
+
+  function chainTotalMm(chainId) {
+    const segs = chainSegments(chainId);
+    let sum = 0;
+    let unit = " mm";
+    let ok = 0;
+    segs.forEach((m) => {
+      const v = Number(String(m.value || "").replace(",", "."));
+      if (!(v > 0)) return;
+      unit = m.unit || unit;
+      sum += v * unitFactorMm(m.unit || " mm");
+      ok++;
+    });
+    if (!ok) return null;
+    return { sumMm: sum, unit, count: segs.length, display: (sum / unitFactorMm(unit)).toFixed(1).replace(/\.0$/, "") };
+  }
+
+  function syncChainActions() {
+    const bar = $("chainActions");
+    if (!bar) return;
+    const active = tool === "chain";
+    bar.hidden = !active;
+    if (!active) return;
+    try { canvasWrap.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (_) {}
+    const st = $("chainStatus");
+    const fin = $("chainFinish");
+    if (!chainSession) {
+      if (st) st.textContent = "Maßkette: erstes Segment ziehen";
+      if (fin) fin.disabled = true;
+      return;
+    }
+    const tot = chainTotalMm(chainSession.chainId);
+    const n = chainSession.count;
+    if (st) {
+      if (n === 0) st.textContent = "1. Segment: Linie ziehen";
+      else if (tot) st.textContent = `${n} Segment${n > 1 ? "e" : ""} · Summe ${fmt(tot.display)}${tot.unit} – nächstes anhängen oder fertig`;
+      else st.textContent = `${n} Segment${n > 1 ? "e" : ""} – Werte ergänzen oder weiterzeichnen`;
+    }
+    if (fin) fin.disabled = n < 1;
+  }
+
+  function finishChainSession(announce) {
+    if (!chainSession) { syncChainActions(); return; }
+    const id = chainSession.chainId;
+    const tot = chainTotalMm(id);
+    const n = chainSession.count;
+    chainSession = null;
+    syncChainActions();
+    if (announce !== false && n > 0) {
+      if (tot) setStatus(`Maßkette fertig: ${n} Segmente · Gesamt ${fmt(tot.display)}${tot.unit}`);
+      else setStatus(`Maßkette mit ${n} Segmenten beendet.`);
+      toast(tot ? `Gesamtmaß: ${fmt(tot.display)}${tot.unit}` : "Kette gespeichert");
+    }
+    draw();
+    renderMeasureList();
+  }
+
+  function cancelChainSession() {
+    if (!chainSession) { syncChainActions(); return; }
+    const id = chainSession.chainId;
+    const segs = measures.filter((m) => m.chainId === id);
+    if (segs.length) {
+      remember();
+      measures = measures.filter((m) => m.chainId !== id);
+      if (selectedId && segs.some((s) => s.id === selectedId)) selectedId = null;
+    }
+    chainSession = null;
+    syncChainActions();
+    refresh();
+    setStatus("Maßkette verworfen.");
   }
 
   function syncDiameterButton() {
@@ -1451,6 +1625,14 @@
   });
 
   $("addDiameterMeasure").addEventListener("click", () => addDiameterMeasureToSelectedCircle());
+  $("chainFinish").addEventListener("click", () => {
+    finishChainSession(true);
+    setTool("select");
+  });
+  $("chainCancel").addEventListener("click", () => {
+    cancelChainSession();
+    setTool("select");
+  });
 
   // Polylinie abschließen / abbrechen
   $("polylineFinish").addEventListener("click", () => {
@@ -2627,13 +2809,23 @@
       return;
     }
 
-    if (["measure", "reference", "circle", "line", "rect", "freehand"].includes(tool)) {
+    if (["measure", "chain", "reference", "circle", "line", "rect", "freehand"].includes(tool)) {
       p = refineDrawPoint(p, null);
       expandSketchIfNeeded(p.x, p.y);
     }
+    // Maßkette: ab 2. Segment am Endpunkt des letzten ansetzen
+    let x1 = p.x, y1 = p.y;
+    if (tool === "chain") {
+      if (!chainSession) chainSession = { chainId: nextId++, lastX: null, lastY: null, count: 0 };
+      if (chainSession.count > 0 && Number.isFinite(chainSession.lastX)) {
+        x1 = chainSession.lastX;
+        y1 = chainSession.lastY;
+      }
+    }
     activeDrawing = {
-      id: nextId++, type: tool,
-      x1: p.x, y1: p.y, x2: p.x, y2: p.y,
+      id: nextId++, type: tool === "chain" ? "measure" : tool,
+      isChainSegment: tool === "chain",
+      x1, y1, x2: p.x, y2: p.y,
       color: colorInput.value, width: Number(widthInput.value),
       points: tool === "freehand" ? [p] : undefined,
       fill: (tool === "rect" || tool === "circle") ? !!(rectFillToggle && rectFillToggle.checked) : false,
@@ -2894,7 +3086,20 @@
     let newMeasureId = null;
     if (a.type === "measure" || a.type === "reference") {
       const isRef = a.type === "reference";
-      const m = { id: a.id, type: isRef ? "reference" : "linear", isReference: isRef, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, baseX1: a.x1, baseY1: a.y1, baseX2: a.x2, baseY2: a.y2, extensionLines: dimensionExtensionLines.checked, endStyle: dimensionEndStyle.value, endSize: Number(dimensionEndSize.value) || 10, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked, autoCalculated: false, layer: currentLayer() };
+      const m = {
+        id: a.id, type: isRef ? "reference" : "linear", isReference: isRef,
+        x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
+        baseX1: a.x1, baseY1: a.y1, baseX2: a.x2, baseY2: a.y2,
+        extensionLines: a.isChainSegment ? false : dimensionExtensionLines.checked,
+        endStyle: dimensionEndStyle.value, endSize: Number(dimensionEndSize.value) || 10,
+        value: "", unit: a.unit || unitSelect.value, color: a.color,
+        textBg: $("textBgToggle").checked, autoCalculated: false, layer: currentLayer()
+      };
+      if (a.isChainSegment && chainSession) {
+        m.chainId = chainSession.chainId;
+        m.chainIndex = chainSession.count;
+        m.labelPrefix = m.labelPrefix || "";
+      }
       if (!isRef) {
         const value = calculatedValueFor(m, m.unit);
         if (value !== null) { m.value = value; m.autoCalculated = true; }
@@ -2902,6 +3107,12 @@
       measures.push(m);
       selectedId = a.id;
       newMeasureId = a.id;
+      if (a.isChainSegment && chainSession) {
+        chainSession.lastX = a.x2;
+        chainSession.lastY = a.y2;
+        chainSession.count += 1;
+        syncChainActions();
+      }
     } else {
       a.layer = currentLayer();
       drawings.push(a);
@@ -2911,8 +3122,20 @@
     // Referenzlinie benötigt den bekannten echten Wert; normale Linien fragen nur dann nach, wenn kein Maßstab existiert.
     if (newMeasureId !== null) {
       const created = measures.find((m) => m.id === newMeasureId);
-      if (created && (created.isReference || !created.autoCalculated)) openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
-      else setStatus(`Berechnet: ${fmt(created.value)}${created.unit || " mm"}. Doppel-Tipp zum manuellen Ändern.`);
+      if (created && created.chainId) {
+        const tot = chainTotalMm(created.chainId);
+        if (created.autoCalculated && tot) {
+          setStatus(`Segment ${chainSession ? chainSession.count : "?"} · Summe ${fmt(tot.display)}${tot.unit} – weiterzeichnen oder „Kette fertig“`);
+        } else if (!created.autoCalculated) {
+          openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
+        } else {
+          setStatus("Segment gesetzt – nächstes anhängen oder Kette fertig.");
+        }
+      } else if (created && (created.isReference || !created.autoCalculated)) {
+        openValueDialog(newMeasureId, { isNew: true, fromPointer: true });
+      } else if (created) {
+        setStatus(`Berechnet: ${fmt(created.value)}${created.unit || " mm"}. Doppel-Tipp zum manuellen Ändern.`);
+      }
     }
   }
 
