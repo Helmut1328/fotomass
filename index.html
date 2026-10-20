@@ -87,6 +87,10 @@
           <button class="tool" data-tool="measure" type="button" title="Neue Maßlinie zeichnen">＋ <span>Maß</span></button>
           <button class="tool" data-tool="reference" type="button" title="Bekannte Strecke als Referenz festlegen">⚖ <span>Referenz</span></button>
         </div>
+        <div class="settings-row draw-style-row" aria-label="Zeichenstil">
+          <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
+          <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
+        </div>
         <details class="tool-details">
           <summary>Weitere Zeichenwerkzeuge <span class="summary-hint">Kreis, Polylinie, Winkel, Linie …</span></summary>
           <div class="tool-grid secondary-tools">
@@ -131,9 +135,6 @@
         </div>
         <p class="hint">Bild auswählen, den gelben Zuschneiderahmen direkt ziehen und einfügen. Danach mit „Auswählen“ verschieben; Größe standardmäßig proportional ändern. „Freie Verzerrung“ erlaubt unabhängige Breite und Höhe.</p>
         <div class="settings-row">
-          <label>Farbe <input id="colorInput" type="color" value="#ff3b30"></label>
-          <label>Stärke <input id="widthInput" type="range" min="2" max="14" value="4"></label>
-
           <label>Schrift <input id="fontSizeInput" type="range" min="10" max="40" value="24"></label>
           <label class="text-bg-label"><input id="textBgToggle" type="checkbox" checked> Textfläche</label>
           <label>Einheit

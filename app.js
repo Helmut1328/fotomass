@@ -55,9 +55,10 @@
 
   // ---------- Zustand ----------
   const MAX_SIDE = 2000;        // längste Foto-Seite im Editor
-  const SKETCH_DEFAULT_W = 10000; // sehr große Skizzenfläche (Hausmaßstäbe + Zoom)
-  const SKETCH_DEFAULT_H = 8000;
-  const SKETCH_MAX_SIDE = 20000;
+  // iPhone/Safari: Canvas-Limit ca. 16–20 MPx / oft max. 4096 pro Seite – größere Werte = kein Zeichnen
+  const SKETCH_DEFAULT_W = 3600;
+  const SKETCH_DEFAULT_H = 2800;
+  const SKETCH_MAX_SIDE = 4096;
   const CROSSHAIR_OFFSET_Y = -52;
   let photoLoaded = false;
   let hasRealPhoto = false;     // echtes Foto (nicht nur Platzhalter-Skizze)
@@ -286,23 +287,41 @@
   }
 
   function ensureSketchCanvasSize() {
-    // Sehr große, vom Foto unabhängige Skizzenfläche
+    // Skizzenfläche – begrenzt auf Geräte-sichere Canvas-Größe (iPhone/Safari)
     let w = Math.max(SKETCH_DEFAULT_W, sketchCanvasW || SKETCH_DEFAULT_W);
     let h = Math.max(SKETCH_DEFAULT_H, sketchCanvasH || SKETCH_DEFAULT_H);
     w = Math.min(SKETCH_MAX_SIDE, w);
     h = Math.min(SKETCH_MAX_SIDE, h);
+    // Sicherheitsnetz: max. ca. 12 MPx
+    if (w * h > 12e6) {
+      const s = Math.sqrt(12e6 / (w * h));
+      w = Math.max(800, Math.floor(w * s));
+      h = Math.max(600, Math.floor(h * s));
+    }
     sketchCanvasW = w;
     sketchCanvasH = h;
-    if (baseCanvas.width !== w || baseCanvas.height !== h) {
+    try {
+      if (baseCanvas.width !== w || baseCanvas.height !== h) {
+        baseCanvas.width = canvas.width = w;
+        baseCanvas.height = canvas.height = h;
+        canvasWrap.style.setProperty("--photo-aspect", `${w} / ${h}`);
+      }
+      const g = baseCanvas.getContext("2d");
+      if (!g) throw new Error("no-2d");
+      g.save();
+      g.fillStyle = "#ffffff";
+      g.fillRect(0, 0, w, h);
+      g.restore();
+    } catch (err) {
+      // Fallback kleinere Fläche
+      w = 2048; h = 1536;
+      sketchCanvasW = w; sketchCanvasH = h;
       baseCanvas.width = canvas.width = w;
       baseCanvas.height = canvas.height = h;
-      canvasWrap.style.setProperty("--photo-aspect", `${w} / ${h}`);
+      const g = baseCanvas.getContext("2d");
+      if (g) { g.fillStyle = "#ffffff"; g.fillRect(0, 0, w, h); }
+      toast("Skizzenfläche verkleinert (Geräte-Limit). Zoom nutzen.");
     }
-    const g = baseCanvas.getContext("2d");
-    g.save();
-    g.fillStyle = "#ffffff";
-    g.fillRect(0, 0, w, h);
-    g.restore();
     photoLoaded = true;
     canvas.style.display = "block";
     hideEmptyState();
@@ -389,7 +408,7 @@
     document.body.classList.add("sketch-mode");
     $("toggleSketchView").textContent = "▧ Fotoansicht";
     $("toggleSketchView").disabled = false;
-    $("sketchModeHint").textContent = "Skizzenansicht: eigene Ebene, getrennt vom Foto. Große Zeichenfläche – zoomen und schieben. Maße auf dem Foto bleiben unverändert.";
+    $("sketchModeHint").textContent = "Skizzenansicht (eigene Ebene). Werkzeug wählen (Linie, Freihand, Kreis …), Farbe/Stärke oben. Foto-Maße bleiben in der Fotoansicht.";
     fitToView();
     updateSketchScaleHint();
     renderMeasureList();
@@ -1112,7 +1131,7 @@
     $("toggleSketchView").textContent = "▧ Fotoansicht";
     $("toggleSketchView").disabled = true;
     $("photoStatus").textContent = "Leere 2D-Skizze";
-    $("sketchModeHint").textContent = "Große Skizzenfläche (10 000×8 000 px, wächst bei Bedarf). Raster + Ortho unter den Werkzeugen. Maßstab per Rechteck setzen.";
+    $("sketchModeHint").textContent = "Skizze: Werkzeug wählen, Farbe/Stärke einstellen. Raster + Ortho aktiv. Maßstab per Rechteck setzen.";
     updateSketchScaleHint();
     renderMeasureList();
     setReady(true);

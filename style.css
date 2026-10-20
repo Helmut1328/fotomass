@@ -670,3 +670,30 @@ body.sketch-mode .canvas-wrap {
 }
 body.sketch-mode .cad-bar { opacity: 1; }
 body:not(.sketch-mode) .cad-grid-mm { opacity: .55; }
+
+.draw-style-row {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.draw-style-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .86rem;
+  font-weight: 600;
+}
+.draw-style-row input[type="color"] {
+  width: 44px;
+  height: 36px;
+  border: 1px solid var(--line, #dce5eb);
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--panel, #fff);
+}
+.draw-style-row input[type="range"] {
+  width: min(140px, 40vw);
+  min-height: 32px;
+}
