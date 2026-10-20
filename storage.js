@@ -12,7 +12,7 @@
   const DB_VERSION = 2;
   const STORE_P = "projects";
   const STORE_PH = "photos";
-  const FORMAT_VERSION = 11;          // Projektformat (siehe parseProject / migrate)
+  const FORMAT_VERSION = 12;          // + Kreis, Polylinie, Skizzen-Maßstab 0 = inaktiv
   const TRASH_DAYS = 30;
   const UNITS = [" mm", " cm", " m", "°"];
 
@@ -183,7 +183,7 @@
       });
 
     const drawings = (Array.isArray(raw.drawings) ? raw.drawings : []).slice(0, 5000)
-      .filter((d) => d && ["freehand", "line", "rect", "text", "image"].includes(d.type))
+      .filter((d) => d && ["freehand", "line", "rect", "text", "image", "circle", "polyline"].includes(d.type))
       .filter((d) => d.type !== "image" || (typeof d.imageData === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(d.imageData) && d.imageData.length < 12e6))
       .map((d, i) => {
         const out = {
@@ -195,7 +195,7 @@
           text: d.type === "text" ? cleanText(d.text, 200) : undefined,
           imageData: d.type === "image" ? d.imageData : undefined,
           sourceName: d.type === "image" ? cleanText(d.sourceName, 100) : undefined,
-          points: d.type === "freehand" && Array.isArray(d.points)
+          points: (d.type === "freehand" || d.type === "polyline") && Array.isArray(d.points)
             ? d.points.slice(0, 20000).filter((p) => p && isNum(p.x) && isNum(p.y)).map((p) => ({ x: p.x, y: p.y })) : undefined
         };
         // Rechteck: Füllung, Transparenz und Drehung beim Laden erhalten
@@ -203,6 +203,15 @@
           out.fill = d.fill === true;
           out.fillOpacity = isNum(d.fillOpacity) ? Math.max(0, Math.min(1, d.fillOpacity)) : 1;
           out.rotation = isNum(d.rotation) ? d.rotation : 0;
+        }
+        // Kreis: optionale Füllung
+        if (d.type === "circle") {
+          out.fill = d.fill === true;
+          out.fillOpacity = isNum(d.fillOpacity) ? Math.max(0, Math.min(1, d.fillOpacity)) : 1;
+        }
+        // Polylinie: geschlossen?
+        if (d.type === "polyline") {
+          out.closed = d.closed === true;
         }
         // Text: Hintergrundflag
         if (d.type === "text") out.textBg = d.textBg !== false;
@@ -221,7 +230,14 @@
       savedAt: typeof raw.savedAt === "string" ? raw.savedAt : new Date().toISOString(),
       photoData: raw.photoData,
       canvasMode: raw.canvasMode === "sketch" ? "sketch" : "photo",
-      sketchScalePxPerMm: isNum(raw.sketchScalePxPerMm) && raw.sketchScalePxPerMm > 0 ? Math.min(raw.sketchScalePxPerMm, 100) : 1,
+      // 0 = kein aktiver Skizzen-Maßstab. Alte Default-1-Werte ohne echten Maßstab werden auf 0 gesetzt.
+      sketchScalePxPerMm: (function () {
+        const s = isNum(raw.sketchScalePxPerMm) ? raw.sketchScalePxPerMm : 0;
+        if (!(s > 0) || s > 100) return 0;
+        // Format < 12 speicherte oft 1 als „leer“ – nur echte Maßstäbe behalten
+        if ((Number(raw.version) || 1) < 12 && Math.abs(s - 1) < 1e-9) return 0;
+        return s;
+      })(),
       measures, drawings,
       nextId: Math.max(isNum(raw.nextId) ? raw.nextId : 1, maxId + 1),
       unit: unitOr(raw.unit),

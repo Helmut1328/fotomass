@@ -1,5 +1,5 @@
 // FotoMaß – Offline-Cache. Netz zuerst (immer aktuelle Version), Cache als Rückfall (Baustelle ohne Empfang).
-const CACHE = "fotomass-v24-measure-commit-fix";
+const CACHE = "fotomass-v25-skizze-plus";
 const ASSETS = ["./", "index.html", "style.css", "style_patch.css", "app.js", "speech.js", "storage.js", "manifest.json", "apple-touch-icon.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

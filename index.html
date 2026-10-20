@@ -78,8 +78,10 @@
           <button class="tool" data-tool="reference" type="button" title="Bekannte Strecke als Referenz festlegen">⚖ <span>Referenz</span></button>
         </div>
         <details class="tool-details">
-          <summary>Weitere Zeichenwerkzeuge <span class="summary-hint">Winkel, Freihand, Linie, Rechteck, Text</span></summary>
+          <summary>Weitere Zeichenwerkzeuge <span class="summary-hint">Kreis, Polylinie, Winkel, Linie …</span></summary>
           <div class="tool-grid secondary-tools">
+            <button class="tool" data-tool="circle" type="button" title="Kreis: Mittelpunkt setzen, Radius ziehen">○ <span>Kreis</span></button>
+            <button class="tool" data-tool="polyline" type="button" title="Polylinie: Punkte tippen, dann Fertig">⌀ <span>Polylinie</span></button>
             <button class="tool" data-tool="angle" type="button">∠ <span>Winkel</span></button>
             <button class="tool" data-tool="freehand" type="button">✎ <span>Freihand</span></button>
             <button class="tool" data-tool="line" type="button">／ <span>Linie</span></button>
@@ -88,6 +90,12 @@
             <button class="tool" data-tool="eraser" type="button">⌫ <span>Radierer</span></button>
           </div>
         </details>
+        <div class="button-row polyline-actions" id="polylineActions" hidden>
+          <button id="polylineFinish" type="button">✓ Polylinie fertig</button>
+          <button id="polylineCancel" class="secondary" type="button">Abbrechen</button>
+          <label class="inline-check"><input id="polylineClose" type="checkbox"> Schließen</label>
+        </div>
+        <p id="sketchScaleHint" class="hint" hidden></p>
         <div class="button-row" style="margin-top:8px"><button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button></div>
         <div class="dimension-style-row" aria-label="Maßlinien-Darstellung">
           <strong class="dimension-style-title">Maßlinien</strong>

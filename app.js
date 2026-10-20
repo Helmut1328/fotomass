@@ -58,7 +58,8 @@
   const CROSSHAIR_OFFSET_Y = -52;
   let photoLoaded = false;
   let canvasMode = "photo"; // photo | sketch
-  let sketchScalePxPerMm = 1;
+  let sketchScalePxPerMm = 0; // 0 = kein Skizzen-Maßstab; gesetzt nach maßbasiertem Rechteck
+  let polylineDraft = null;   // laufende Polylinie { id, type, points, color, width, closed }
   let photoData = null;         // verkleinertes JPEG (Data-URL) -> wird im Projekt gespeichert
   let originalBlob = null;      // unverändertes Originalfoto (wird zusätzlich getrennt in IndexedDB abgelegt)
   let projectId = null;         // Projekt-ID (Schlüssel in der Datenbank – nie der Name)
@@ -321,17 +322,30 @@
       const sd = drawings.find((d) => d.id === selectedDrawingId && !["image", "text"].includes(d.type));
       if (sd) {
         let x1, y1, x2, y2;
-        if (sd.type === "freehand" && sd.points && sd.points.length) {
+        if ((sd.type === "freehand" || sd.type === "polyline") && sd.points && sd.points.length) {
           x1 = Math.min(...sd.points.map(p => p.x)); y1 = Math.min(...sd.points.map(p => p.y));
           x2 = Math.max(...sd.points.map(p => p.x)); y2 = Math.max(...sd.points.map(p => p.y));
+        } else if (sd.type === "circle") {
+          const r = Math.hypot(sd.x2 - sd.x1, sd.y2 - sd.y1);
+          x1 = sd.x1 - r; y1 = sd.y1 - r; x2 = sd.x1 + r; y2 = sd.y1 + r;
         } else { x1 = Math.min(sd.x1, sd.x2); y1 = Math.min(sd.y1, sd.y2); x2 = Math.max(sd.x1, sd.x2); y2 = Math.max(sd.y1, sd.y2); }
         g.save(); g.strokeStyle = "#1682d5"; g.lineWidth = scr(1.5); g.setLineDash([scr(5), scr(4)]);
         g.strokeRect(x1-scr(8), y1-scr(8), Math.max(scr(16),x2-x1+scr(16)), Math.max(scr(16),y2-y1+scr(16)));
         g.setLineDash([]); drawHandle(g, x1, y1); drawHandle(g, x2, y2);
         if (sd.type === "rect") { const cx=(x1+x2)/2, cy=y1-scr(24); g.beginPath(); g.moveTo((x1+x2)/2,y1); g.lineTo(cx,cy); g.stroke(); drawHandle(g,cx,cy); }
         if (sd.type === "line") { drawHandle(g,sd.x1,sd.y1); drawHandle(g,sd.x2,sd.y2); }
+        if (sd.type === "circle") { drawHandle(g, sd.x1, sd.y1); drawHandle(g, sd.x2, sd.y2); }
+        if (sd.type === "polyline" && sd.points) sd.points.forEach((pt) => drawHandle(g, pt.x, pt.y));
         g.restore();
       }
+    }
+    // Laufende Polylinie (noch nicht abgeschlossen)
+    if (!forExport && polylineDraft && polylineDraft.points && polylineDraft.points.length) {
+      drawShape(g, polylineDraft, k);
+      g.save();
+      g.fillStyle = "#1682d5";
+      polylineDraft.points.forEach((pt) => { g.beginPath(); g.arc(pt.x, pt.y, scr(4), 0, Math.PI * 2); g.fill(); });
+      g.restore();
     }
     measures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
@@ -565,6 +579,32 @@
       g.moveTo(d.x1, d.y1);
       g.lineTo(d.x2, d.y2);
       g.stroke();
+    } else if (d.type === "circle") {
+      const r = Math.hypot((d.x2 - d.x1), (d.y2 - d.y1));
+      if (r > 0.5) {
+        g.beginPath();
+        g.arc(d.x1, d.y1, r, 0, Math.PI * 2);
+        if (d.fill) {
+          g.save();
+          g.globalAlpha = Math.max(0, Math.min(1, Number(d.fillOpacity ?? 1)));
+          g.fill();
+          g.restore();
+        }
+        g.stroke();
+      }
+    } else if (d.type === "polyline") {
+      const pts = d.points;
+      if (pts && pts.length > 1) {
+        g.beginPath();
+        g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+        if (d.closed) g.closePath();
+        g.stroke();
+      } else if (pts && pts.length === 1) {
+        g.beginPath();
+        g.arc(pts[0].x, pts[0].y, Math.max(2, 3 * k), 0, Math.PI * 2);
+        g.fill();
+      }
     } else if (d.type === "rect") {
       const rx = Math.min(d.x1, d.x2), ry = Math.min(d.y1, d.y2);
       const rw = Math.abs(d.x2 - d.x1), rh = Math.abs(d.y2 - d.y1);
@@ -623,6 +663,25 @@
         if (d < bestDist) { bestDist = d; best = c; }
       });
     });
+    drawings.forEach((d) => {
+      if (excludeId && d.id === excludeId) return;
+      if (d.type === "circle") {
+        [{ x: d.x1, y: d.y1 }, { x: d.x2, y: d.y2 }].forEach((c) => {
+          const dd = dist(p, c);
+          if (dd < bestDist) { bestDist = dd; best = c; }
+        });
+      } else if (d.type === "polyline" && d.points) {
+        d.points.forEach((c) => {
+          const dd = dist(p, c);
+          if (dd < bestDist) { bestDist = dd; best = c; }
+        });
+      } else if (d.type === "line" || d.type === "rect") {
+        [{ x: d.x1, y: d.y1 }, { x: d.x2, y: d.y2 }].forEach((c) => {
+          const dd = dist(p, c);
+          if (dd < bestDist) { bestDist = dd; best = c; }
+        });
+      }
+    });
     return best;
   }
 
@@ -668,6 +727,17 @@
         if (hit) return i;
       } else if (d.type === "line") {
         if (distanceToSegment(p, d.x1, d.y1, d.x2, d.y2) < tol) return i;
+      } else if (d.type === "circle") {
+        const r = Math.hypot(d.x2 - d.x1, d.y2 - d.y1);
+        const dCenter = Math.hypot(p.x - d.x1, p.y - d.y1);
+        if (Math.abs(dCenter - r) < tol || dCenter < Math.min(tol, r * 0.35)) return i;
+      } else if (d.type === "polyline" && d.points && d.points.length) {
+        const plTol = scr(24);
+        if (d.points.length === 1 && dist(p, d.points[0]) < plTol) return i;
+        for (let j = 0; j < d.points.length - 1; j++) {
+          if (distanceToSegment(p, d.points[j].x, d.points[j].y, d.points[j + 1].x, d.points[j + 1].y) < plTol) return i;
+        }
+        if (d.closed && d.points.length > 2 && distanceToSegment(p, d.points[d.points.length - 1].x, d.points[d.points.length - 1].y, d.points[0].x, d.points[0].y) < plTol) return i;
       } else if (d.type === "rect") {
         const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2), x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
         const cx=(x1+x2)/2, cy=(y1+y2)/2, a=-(d.rotation||0), dx=p.x-cx, dy=p.y-cy;
@@ -761,11 +831,19 @@
 
   function setTool(name) {
     if (tool === "angle" && name !== "angle" && anglePoints.length) { anglePoints = []; draw(); }
+    if (tool === "polyline" && name !== "polyline" && polylineDraft) {
+      // Beim Werkzeugwechsel offene Polylinie verwerfen
+      polylineDraft = null;
+      syncPolylineActions();
+    }
     tool = name;
     document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
     if ((name === "measure" || name === "reference") && unitSelect.value === "°") unitSelect.value = " mm";
     if (name === "angle") setStatus("Winkel: dreimal tippen – Scheitelpunkt, erster Schenkel, zweiter Schenkel.");
     if (name === "reference") setStatus("Referenzmaß: bekannte Strecke ziehen und echten Wert eingeben. Es gilt für dieselbe Bildebene.");
+    if (name === "circle") setStatus("Kreis: Mittelpunkt tippen und Radius ziehen.");
+    if (name === "polyline") setStatus("Polylinie: nacheinander Punkte tippen, dann „Polylinie fertig“.");
+    syncPolylineActions();
     // Füllregler immer nutzbar (Vorgabe für neue Rechtecke bzw. Änderung des ausgewählten)
     if (typeof syncRectFillControls === "function") {
       const sel = drawings.find((x) => x.id === selectedDrawingId && x.type === "rect");
@@ -773,18 +851,45 @@
     }
   }
 
+  function syncPolylineActions() {
+    const bar = $("polylineActions");
+    if (!bar) return;
+    bar.hidden = !(tool === "polyline" && polylineDraft && polylineDraft.points && polylineDraft.points.length);
+  }
+
   // ---------- Referenzmaß / Maßstab ----------
   const unitFactorMm = (unit) => ({ " mm": 1, " cm": 10, " m": 1000 })[unit] || 1;
   const referenceMeasure = () => measures.find((m) => m.isReference && Number(String(m.value).replace(",", ".")) > 0 && m.type !== "angle");
+  function updateSketchScaleHint() {
+    const el = $("sketchScaleHint");
+    if (!el) return;
+    if (sketchScalePxPerMm > 0 && Number.isFinite(sketchScalePxPerMm)) {
+      el.hidden = false;
+      el.textContent = `Skizzen-Maßstab aktiv · neue Maßlinien werden in mm berechnet (${(1 / sketchScalePxPerMm).toFixed(2)} mm/px)`;
+    } else {
+      el.hidden = true;
+      el.textContent = "";
+    }
+  }
   function calculatedValueFor(m, unit) {
-    const ref = referenceMeasure();
-    if (!ref || m === ref) return null;
-    const refPx = Math.hypot(ref.x2 - ref.x1, ref.y2 - ref.y1);
     const px = Math.hypot(m.x2 - m.x1, m.y2 - m.y1);
-    const refValue = Number(String(ref.value).replace(",", "."));
-    if (!(refPx > 0) || !(px >= 0) || !(refValue > 0)) return null;
-    const lengthMm = (px / refPx) * refValue * unitFactorMm(ref.unit);
-    return (lengthMm / unitFactorMm(unit || " mm")).toFixed(1).replace(/\.0$/, "");
+    if (!(px >= 0)) return null;
+    // 1) Foto-Referenzmaß hat Vorrang
+    const ref = referenceMeasure();
+    if (ref && m !== ref) {
+      const refPx = Math.hypot(ref.x2 - ref.x1, ref.y2 - ref.y1);
+      const refValue = Number(String(ref.value).replace(",", "."));
+      if (refPx > 0 && refValue > 0) {
+        const lengthMm = (px / refPx) * refValue * unitFactorMm(ref.unit);
+        return (lengthMm / unitFactorMm(unit || " mm")).toFixed(1).replace(/\.0$/, "");
+      }
+    }
+    // 2) Skizzen-Maßstab (nach maßbasiertem Rechteck)
+    if (sketchScalePxPerMm > 0 && Number.isFinite(sketchScalePxPerMm)) {
+      const lengthMm = px / sketchScalePxPerMm;
+      return (lengthMm / unitFactorMm(unit || " mm")).toFixed(1).replace(/\.0$/, "");
+    }
+    return null;
   }
   function recalculateAutomaticMeasures() {
     measures.forEach((m) => {
@@ -815,10 +920,11 @@
     photoData = blank.toDataURL("image/png");
     const img = new Image();
     img.onload = () => {
-      setBaseFromImage(img); canvasMode = "sketch"; sketchScalePxPerMm = 1;
+      setBaseFromImage(img); canvasMode = "sketch"; sketchScalePxPerMm = 0;
       setSketchBackground(); $("photoStatus").textContent = "Leere 2D-Skizze";
       $("toggleSketchView").disabled = false; renderMeasureList(); setReady(true); refresh();
-      setStatus("Neue 2D-Skizze angelegt. Du kannst frei zeichnen oder ein maßbasiertes Rechteck erzeugen.");
+      updateSketchScaleHint();
+      setStatus("Neue 2D-Skizze angelegt. Maßbasiertes Rechteck setzt den Maßstab – danach werden neue Maße in mm berechnet.");
       flushAutosave();
     };
     img.onerror = () => setStatus("Skizzenfläche konnte nicht erstellt werden.");
@@ -869,7 +975,37 @@
       endStyle: endSt, endSize: endSz, extensionLines: extOn
     });
     sketchScalePxPerMm = pxPerMm; selectedDrawingId = id; selectedId = null;
-    refresh(); setStatus(`Rechteck erstellt: ${wMm} × ${hMm} mm. Maße sind als Zeichnungswerte gespeichert.`);
+    updateSketchScaleHint();
+    refresh(); setStatus(`Rechteck erstellt: ${wMm} × ${hMm} mm. Maßstab aktiv – weitere Maßlinien werden in mm berechnet.`);
+  });
+
+  // Polylinie abschließen / abbrechen
+  $("polylineFinish").addEventListener("click", () => {
+    if (!polylineDraft || !polylineDraft.points || polylineDraft.points.length < 2) {
+      toast("Mindestens zwei Punkte für eine Polylinie nötig.");
+      return;
+    }
+    remember();
+    const closed = !!( $("polylineClose") && $("polylineClose").checked );
+    drawings.push({
+      id: polylineDraft.id,
+      type: "polyline",
+      points: polylineDraft.points.map((q) => ({ x: q.x, y: q.y })),
+      color: polylineDraft.color,
+      width: polylineDraft.width || 4,
+      closed
+    });
+    selectedDrawingId = polylineDraft.id;
+    polylineDraft = null;
+    syncPolylineActions();
+    refresh();
+    setStatus(closed ? "Geschlossene Polylinie erzeugt." : "Polylinie erzeugt.");
+  });
+  $("polylineCancel").addEventListener("click", () => {
+    polylineDraft = null;
+    syncPolylineActions();
+    draw();
+    setStatus("Polylinie verworfen.");
   });
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
@@ -966,17 +1102,20 @@
         const sameSize = (img.naturalWidth || img.width) === canvas.width;
         photoData = sameSize ? p.photoData : baseCanvas.toDataURL("image/jpeg", 0.9);
         canvasMode = p.canvasMode === "sketch" ? "sketch" : "photo";
-        sketchScalePxPerMm = Number(p.sketchScalePxPerMm) > 0 ? Number(p.sketchScalePxPerMm) : 1;
+        sketchScalePxPerMm = Number(p.sketchScalePxPerMm) > 0 ? Number(p.sketchScalePxPerMm) : 0;
         if (canvasMode === "sketch") setSketchBackground(); else { document.body.classList.remove("sketch-mode"); $("toggleSketchView").textContent = "✎ Skizzenansicht"; $("toggleSketchView").disabled = false; }
         projectId = p.id; projectCreated = p.created;
         originalBlob = original || null;
         measures = p.measures; drawings = p.drawings; nextId = p.nextId;
+        polylineDraft = null;
         $("projectName").value = p.projectName;
         $("photoStatus").textContent = p.projectName || "Projekt geöffnet";
         unitSelect.value = p.unit; snapToggle.checked = p.snap; fontSizeInput.value = p.fontSize;
         if (p.dimensionEndStyle) dimensionEndStyle.value = p.dimensionEndStyle;
         if (p.dimensionEndSize) dimensionEndSize.value = String(p.dimensionEndSize);
         dimensionExtensionLines.checked = p.dimensionExtensionLines !== false;
+        updateSketchScaleHint();
+        syncPolylineActions();
         renderMeasureList(); draw(); setReady(true);
         setSaveState("saved");
         resolve();
@@ -1004,7 +1143,7 @@
 
   // Editor leeren (z. B. wenn das geöffnete Projekt in den Papierkorb kommt)
   function closeProject() {
-    photoLoaded = false; canvasMode = "photo"; sketchScalePxPerMm = 1; projectId = null; photoData = null; originalBlob = null;
+    photoLoaded = false; canvasMode = "photo"; sketchScalePxPerMm = 0; projectId = null; photoData = null; originalBlob = null; polylineDraft = null;
     document.body.classList.remove("sketch-mode"); $("toggleSketchView").disabled = true;
     resetState();
     canvas.style.display = "none";
@@ -1026,7 +1165,7 @@
       URL.revokeObjectURL(url);
       if (!(await leaveCurrentProject())) return;
       resetState();
-      canvasMode = "photo"; sketchScalePxPerMm = 1; document.body.classList.remove("sketch-mode");
+      canvasMode = "photo"; sketchScalePxPerMm = 0; document.body.classList.remove("sketch-mode"); polylineDraft = null;
       $("toggleSketchView").textContent = "✎ Skizzenansicht"; $("toggleSketchView").disabled = false;
       projectId = storage.newId();
       projectCreated = new Date().toISOString();
@@ -1682,7 +1821,8 @@
     const keep = measures.filter(isLocked);
     if (!confirm("Alle Maßlinien und Zeichnungen löschen?" + (keep.length ? "\n(" + keep.length + " gesperrte Maße bleiben erhalten.)" : ""))) return;
     remember();
-    measures = keep; drawings = []; selectedId = null; selectedDrawingId = null; snapPoint = null;
+    measures = keep; drawings = []; selectedId = null; selectedDrawingId = null; snapPoint = null; polylineDraft = null;
+    syncPolylineActions();
     refresh();
     toast("Alles gelöscht.", "Rückgängig", undo, 8000);
   });
@@ -1909,21 +2049,31 @@
             const cx=(x1+x2)/2, cy=(y1+y2)/2;
             if (dist(p,{x:cx,y:y1-scr(24)})<scr(30)) { activeDrawing={type:"move-rotate-rect",id:imageDrawing.id,center:{x:cx,y:cy},startAngle:Math.atan2(p.y-cy,p.x-cx),originalRotation:imageDrawing.rotation||0,moved:false,changed:false,armed:true}; cancelLongPress(); draw(); return; }
           }
-          const bounds = imageDrawing.type === "freehand" && imageDrawing.points && imageDrawing.points.length
-            ? { x1: Math.min(...imageDrawing.points.map(q=>q.x)), y1: Math.min(...imageDrawing.points.map(q=>q.y)), x2: Math.max(...imageDrawing.points.map(q=>q.x)), y2: Math.max(...imageDrawing.points.map(q=>q.y)) }
-            : { x1: Math.min(imageDrawing.x1,imageDrawing.x2), y1: Math.min(imageDrawing.y1,imageDrawing.y2), x2: Math.max(imageDrawing.x1,imageDrawing.x2), y2: Math.max(imageDrawing.y1,imageDrawing.y2) };
+          let bounds;
+          if ((imageDrawing.type === "freehand" || imageDrawing.type === "polyline") && imageDrawing.points && imageDrawing.points.length) {
+            bounds = { x1: Math.min(...imageDrawing.points.map(q=>q.x)), y1: Math.min(...imageDrawing.points.map(q=>q.y)), x2: Math.max(...imageDrawing.points.map(q=>q.x)), y2: Math.max(...imageDrawing.points.map(q=>q.y)) };
+          } else if (imageDrawing.type === "circle") {
+            const r = Math.hypot(imageDrawing.x2 - imageDrawing.x1, imageDrawing.y2 - imageDrawing.y1);
+            bounds = { x1: imageDrawing.x1 - r, y1: imageDrawing.y1 - r, x2: imageDrawing.x1 + r, y2: imageDrawing.y1 + r };
+          } else {
+            bounds = { x1: Math.min(imageDrawing.x1,imageDrawing.x2), y1: Math.min(imageDrawing.y1,imageDrawing.y2), x2: Math.max(imageDrawing.x1,imageDrawing.x2), y2: Math.max(imageDrawing.y1,imageDrawing.y2) };
+          }
           if (wasSelected && imageDrawing.type === "line") {
             if (dist(p,{x:imageDrawing.x1,y:imageDrawing.y1})<scr(30)) { activeDrawing={type:"move-drawing-endpoint",id:imageDrawing.id,endpoint:1,moved:false,changed:false,armed:true,original:JSON.parse(JSON.stringify(imageDrawing))}; cancelLongPress(); draw(); return; }
             if (dist(p,{x:imageDrawing.x2,y:imageDrawing.y2})<scr(30)) { activeDrawing={type:"move-drawing-endpoint",id:imageDrawing.id,endpoint:2,moved:false,changed:false,armed:true,original:JSON.parse(JSON.stringify(imageDrawing))}; cancelLongPress(); draw(); return; }
           }
+          if (wasSelected && imageDrawing.type === "circle" && dist(p, { x: imageDrawing.x2, y: imageDrawing.y2 }) < scr(30)) {
+            activeDrawing = { type: "move-resize-shape", id: imageDrawing.id, dx: p.x, dy: p.y, moved: false, changed: false, armed: true, original: JSON.parse(JSON.stringify(imageDrawing)), bounds };
+            cancelLongPress(); draw(); return;
+          }
           const resizeHit = wasSelected && dist(p, {x:bounds.x2,y:bounds.y2}) < scr(30);
-          activeDrawing = { type: resizeHit && imageDrawing.type !== "freehand" ? "move-resize-shape" : "move-shape", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:JSON.parse(JSON.stringify(imageDrawing)), bounds };
+          activeDrawing = { type: resizeHit && imageDrawing.type !== "freehand" && imageDrawing.type !== "polyline" ? "move-resize-shape" : "move-shape", id:imageDrawing.id, dx:p.x, dy:p.y, moved:false, changed:false, armed:wasSelected, original:JSON.parse(JSON.stringify(imageDrawing)), bounds };
           cancelLongPress();
         } else { selectedDrawingId = null; }
       }
       $("textBgToggle").checked = selectedId ? (measures.find(x => x.id === selectedId)?.textBg !== false) : true;
       const selectedDrawing = drawings.find(x => x.id === selectedDrawingId);
-      if (selectedDrawing && ["freehand", "line", "rect"].includes(selectedDrawing.type)) {
+      if (selectedDrawing && ["freehand", "line", "rect", "circle", "polyline"].includes(selectedDrawing.type)) {
         widthInput.value = String(selectedDrawing.width || 4);
         colorInput.value = selectedDrawing.color || "#ff3b30";
       }
@@ -1955,7 +2105,26 @@
       return;
     }
 
-    if (tool === "measure" || tool === "reference") {
+    // Polylinie: jeder Tipp setzt einen Punkt; Abschluss über „Fertig“
+    if (tool === "polyline") {
+      const sn = findSnap(p);
+      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
+      if (!polylineDraft) {
+        polylineDraft = {
+          id: nextId++, type: "polyline", points: [{ x: p.x, y: p.y }],
+          color: colorInput.value, width: Number(widthInput.value) || 4, closed: false
+        };
+      } else {
+        const last = polylineDraft.points[polylineDraft.points.length - 1];
+        if (dist(last, p) > scr(6)) polylineDraft.points.push({ x: p.x, y: p.y });
+      }
+      syncPolylineActions();
+      draw();
+      setStatus(`Polylinie: ${polylineDraft.points.length} Punkt(e) – weiter tippen oder „Fertig“.`);
+      return;
+    }
+
+    if (tool === "measure" || tool === "reference" || tool === "circle") {
       const sn = findSnap(p);
       if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
     }
@@ -1964,8 +2133,8 @@
       x1: p.x, y1: p.y, x2: p.x, y2: p.y,
       color: colorInput.value, width: Number(widthInput.value),
       points: tool === "freehand" ? [p] : undefined,
-      fill: tool === "rect" ? !!(rectFillToggle && rectFillToggle.checked) : false,
-      fillOpacity: tool === "rect" && rectFillOpacity ? Number(rectFillOpacity.value) / 100 : 1,
+      fill: (tool === "rect" || tool === "circle") ? !!(rectFillToggle && rectFillToggle.checked) : false,
+      fillOpacity: (tool === "rect" || tool === "circle") && rectFillOpacity ? Number(rectFillOpacity.value) / 100 : 1,
       value: "", unit: unitSelect.value
     };
   }
@@ -2042,8 +2211,11 @@
       activeDrawing.changed = true;
       const dx = p.x - activeDrawing.dx, dy = p.y - activeDrawing.dy, o = activeDrawing.original;
       if (activeDrawing.type === "move-shape") {
-        if (d.type === "freehand") d.points = o.points.map(q => ({x:q.x+dx,y:q.y+dy}));
+        if (d.type === "freehand" || d.type === "polyline") d.points = (o.points || []).map(q => ({x:q.x+dx,y:q.y+dy}));
         else { d.x1=o.x1+dx; d.y1=o.y1+dy; d.x2=o.x2+dx; d.y2=o.y2+dy; }
+      } else if (d.type === "circle") {
+        // Radius am Umfangspunkt ändern, Mittelpunkt bleibt
+        d.x2 = p.x; d.y2 = p.y;
       } else {
         const b = activeDrawing.bounds, minW = scr(12), minH = scr(12);
         const nx2 = Math.max(b.x1+minW, b.x2+dx), ny2 = Math.max(b.y1+minH, b.y2+dy);
@@ -2174,8 +2346,8 @@
       return;
     }
 
-    // Zu kurze Linien verwerfen
-    if ((a.type === "line" || a.type === "measure" || a.type === "reference") && dist({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }) < scr(8)) {
+    // Zu kurze Linien / Kreise verwerfen
+    if ((a.type === "line" || a.type === "measure" || a.type === "reference" || a.type === "circle") && dist({ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }) < scr(8)) {
       endGesture(); draw();
       return;
     }
