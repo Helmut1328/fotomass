@@ -12,7 +12,7 @@
   const DB_VERSION = 2;
   const STORE_P = "projects";
   const STORE_PH = "photos";
-  const FORMAT_VERSION = 13;          // + Kreis, Polylinie, Skizzen-Maßstab 0 = inaktiv
+  const FORMAT_VERSION = 14;          // + Kreis, Polylinie, Skizzen-Maßstab 0 = inaktiv
   const TRASH_DAYS = 30;
   const UNITS = [" mm", " cm", " m", "°"];
 
@@ -184,7 +184,7 @@
       });
 
     const drawings = (Array.isArray(raw.drawings) ? raw.drawings : []).slice(0, 5000)
-      .filter((d) => d && ["freehand", "line", "rect", "text", "image", "circle", "polyline"].includes(d.type))
+      .filter((d) => d && ["freehand", "line", "rect", "text", "image", "circle", "polyline", "arc"].includes(d.type))
       .filter((d) => d.type !== "image" || (typeof d.imageData === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(d.imageData) && d.imageData.length < 12e6))
       .map((d, i) => {
         const out = {
@@ -210,6 +210,10 @@
         if (d.type === "circle") {
           out.fill = d.fill === true;
           out.fillOpacity = isNum(d.fillOpacity) ? Math.max(0, Math.min(1, d.fillOpacity)) : 1;
+        }
+        if (d.type === "arc") {
+          out.x3 = isNum(d.x3) ? d.x3 : 0;
+          out.y3 = isNum(d.y3) ? d.y3 : 0;
         }
         // Polylinie: geschlossen?
         if (d.type === "polyline") {

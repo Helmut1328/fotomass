@@ -79,6 +79,7 @@
   let tool = "select";
   let selectedId = null;
   let anglePoints = [];
+  let arcPoints = []; // Bogen: Mittelpunkt, Start, Ende
   let measures = [];
   let drawings = [];
   let selectedDrawingId = null;
@@ -226,6 +227,7 @@
   function refresh() {
     renderMeasureList();
     draw();
+    syncDiameterButton();
     scheduleAutosave();
   }
 
@@ -365,6 +367,7 @@
       if (d.points) d.points.forEach((pt) => { pt.x += dx; pt.y += dy; });
       if (Number.isFinite(d.x1)) { d.x1 += dx; d.y1 += dy; }
       if (Number.isFinite(d.x2)) { d.x2 += dx; d.y2 += dy; }
+      if (Number.isFinite(d.x3)) { d.x3 += dx; d.y3 += dy; }
     });
     if (polylineDraft && polylineDraft.points) polylineDraft.points.forEach((pt) => { pt.x += dx; pt.y += dy; });
   }
@@ -484,6 +487,10 @@
         } else if (sd.type === "circle") {
           const r = Math.hypot(sd.x2 - sd.x1, sd.y2 - sd.y1);
           x1 = sd.x1 - r; y1 = sd.y1 - r; x2 = sd.x1 + r; y2 = sd.y1 + r;
+        } else if (sd.type === "arc") {
+          const r = Math.hypot(sd.x2 - sd.x1, sd.y2 - sd.y1);
+          x1 = Math.min(sd.x1 - r, sd.x2, sd.x3); y1 = Math.min(sd.y1 - r, sd.y2, sd.y3);
+          x2 = Math.max(sd.x1 + r, sd.x2, sd.x3); y2 = Math.max(sd.y1 + r, sd.y2, sd.y3);
         } else { x1 = Math.min(sd.x1, sd.x2); y1 = Math.min(sd.y1, sd.y2); x2 = Math.max(sd.x1, sd.x2); y2 = Math.max(sd.y1, sd.y2); }
         g.save(); g.strokeStyle = "#1682d5"; g.lineWidth = scr(1.5); g.setLineDash([scr(5), scr(4)]);
         g.strokeRect(x1-scr(8), y1-scr(8), Math.max(scr(16),x2-x1+scr(16)), Math.max(scr(16),y2-y1+scr(16)));
@@ -491,6 +498,7 @@
         if (sd.type === "rect") { const cx=(x1+x2)/2, cy=y1-scr(24); g.beginPath(); g.moveTo((x1+x2)/2,y1); g.lineTo(cx,cy); g.stroke(); drawHandle(g,cx,cy); }
         if (sd.type === "line") { drawHandle(g,sd.x1,sd.y1); drawHandle(g,sd.x2,sd.y2); }
         if (sd.type === "circle") { drawHandle(g, sd.x1, sd.y1); drawHandle(g, sd.x2, sd.y2); }
+        if (sd.type === "arc") { drawHandle(g, sd.x1, sd.y1); drawHandle(g, sd.x2, sd.y2); drawHandle(g, sd.x3, sd.y3); }
         if (sd.type === "polyline" && sd.points) sd.points.forEach((pt) => drawHandle(g, pt.x, pt.y));
         g.restore();
       }
@@ -509,6 +517,30 @@
       g.save(); g.strokeStyle = colorInput.value; g.fillStyle = colorInput.value; g.lineWidth = 2 * k;
       g.beginPath(); anglePoints.forEach((pt,i) => i ? g.lineTo(pt.x,pt.y) : g.moveTo(pt.x,pt.y)); g.stroke();
       anglePoints.forEach(pt => { g.beginPath(); g.arc(pt.x,pt.y,4*k,0,Math.PI*2); g.fill(); }); g.restore();
+    }
+    if (tool === "arc" && arcPoints.length) {
+      g.save(); g.strokeStyle = colorInput.value; g.fillStyle = colorInput.value; g.lineWidth = 2 * k;
+      arcPoints.forEach((pt) => { g.beginPath(); g.arc(pt.x, pt.y, 5 * k, 0, Math.PI * 2); g.fill(); });
+      if (arcPoints.length >= 2) {
+        const c = arcPoints[0], s = arcPoints[1];
+        const r = Math.hypot(s.x - c.x, s.y - c.y);
+        g.beginPath(); g.moveTo(c.x, c.y); g.lineTo(s.x, s.y); g.stroke();
+        if (arcPoints.length === 2 && r > 1) {
+          g.setLineDash([4 * k, 3 * k]);
+          g.beginPath(); g.arc(c.x, c.y, r, 0, Math.PI * 2); g.stroke();
+          g.setLineDash([]);
+        }
+        if (arcPoints.length >= 3 && r > 1) {
+          const e = arcPoints[2];
+          const a0 = Math.atan2(s.y - c.y, s.x - c.x);
+          const a1 = Math.atan2(e.y - c.y, e.x - c.x);
+          let delta = a1 - a0;
+          while (delta <= -Math.PI) delta += Math.PI * 2;
+          while (delta > Math.PI) delta -= Math.PI * 2;
+          g.beginPath(); g.arc(c.x, c.y, r, a0, a1, delta < 0); g.stroke();
+        }
+      }
+      g.restore();
     }
     if (activeDrawing && !/^(move-|text-place|angle-point)/.test(activeDrawing.type)) {
       if (activeDrawing.type === "measure" || activeDrawing.type === "reference") drawMeasurePreview(g, activeDrawing, k);
@@ -776,6 +808,19 @@
         }
         g.stroke();
       }
+    } else if (d.type === "arc") {
+      // Mittelpunkt x1,y1 · Start x2,y2 · Ende x3,y3 (Radius vom Start)
+      const r = Math.hypot(d.x2 - d.x1, d.y2 - d.y1);
+      if (r > 0.5) {
+        const a0 = Math.atan2(d.y2 - d.y1, d.x2 - d.x1);
+        const a1 = Math.atan2(d.y3 - d.y1, d.x3 - d.x1);
+        let delta = a1 - a0;
+        while (delta <= -Math.PI) delta += Math.PI * 2;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        g.beginPath();
+        g.arc(d.x1, d.y1, r, a0, a1, delta < 0);
+        g.stroke();
+      }
     } else if (d.type === "polyline") {
       const pts = d.points;
       if (pts && pts.length > 1) {
@@ -854,6 +899,11 @@
           const dd = dist(p, c);
           if (dd < bestDist) { bestDist = dd; best = c; }
         });
+      } else if (d.type === "arc") {
+        [{ x: d.x1, y: d.y1 }, { x: d.x2, y: d.y2 }, { x: d.x3, y: d.y3 }].forEach((c) => {
+          const dd = dist(p, c);
+          if (dd < bestDist) { bestDist = dd; best = c; }
+        });
       } else if (d.type === "polyline" && d.points) {
         d.points.forEach((c) => {
           const dd = dist(p, c);
@@ -917,6 +967,28 @@
         const r = Math.hypot(d.x2 - d.x1, d.y2 - d.y1);
         const dCenter = Math.hypot(p.x - d.x1, p.y - d.y1);
         if (Math.abs(dCenter - r) < tol || dCenter < Math.min(tol, r * 0.35)) return i;
+      } else if (d.type === "arc") {
+        const r = Math.hypot(d.x2 - d.x1, d.y2 - d.y1);
+        const dCenter = Math.hypot(p.x - d.x1, p.y - d.y1);
+        if (Math.abs(dCenter - r) < tol + 2) {
+          const a0 = Math.atan2(d.y2 - d.y1, d.x2 - d.x1);
+          const a1 = Math.atan2(d.y3 - d.y1, d.x3 - d.x1);
+          const ap = Math.atan2(p.y - d.y1, p.x - d.x1);
+          const norm = (a) => { let x = a; while (x < 0) x += Math.PI * 2; while (x >= Math.PI * 2) x -= Math.PI * 2; return x; };
+          let from = norm(a0), to = norm(a1), cur = norm(ap);
+          let delta = to - from;
+          if (delta < 0) delta += Math.PI * 2;
+          let dCur = cur - from;
+          if (dCur < 0) dCur += Math.PI * 2;
+          // kürzerer Bogen (wie gezeichnet)
+          let short = a1 - a0;
+          while (short <= -Math.PI) short += Math.PI * 2;
+          while (short > Math.PI) short -= Math.PI * 2;
+          const onArc = short >= 0 ? dCur <= delta || delta > Math.PI * 1.99 : dCur >= (Math.PI * 2 - Math.abs(short)) || Math.abs(short) > Math.PI * 0.99;
+          // großzügig: Nähe zur Bogenlinie reicht
+          if (Math.abs(dCenter - r) < tol + 4) return i;
+        }
+        if (dist(p, { x: d.x1, y: d.y1 }) < tol || dist(p, { x: d.x2, y: d.y2 }) < tol || dist(p, { x: d.x3, y: d.y3 }) < tol) return i;
       } else if (d.type === "polyline" && d.points && d.points.length) {
         const plTol = scr(24);
         if (d.points.length === 1 && dist(p, d.points[0]) < plTol) return i;
@@ -1018,6 +1090,7 @@
 
   function setTool(name) {
     if (tool === "angle" && name !== "angle" && anglePoints.length) { anglePoints = []; draw(); }
+    if (tool === "arc" && name !== "arc" && arcPoints.length) { arcPoints = []; draw(); }
     if (tool === "polyline" && name !== "polyline" && polylineDraft) {
       // Beim Werkzeugwechsel offene Polylinie verwerfen
       polylineDraft = null;
@@ -1028,9 +1101,11 @@
     if ((name === "measure" || name === "reference") && unitSelect.value === "°") unitSelect.value = " mm";
     if (name === "angle") setStatus("Winkel: dreimal tippen – Scheitelpunkt, erster Schenkel, zweiter Schenkel.");
     if (name === "reference") setStatus("Referenzmaß: bekannte Strecke ziehen und echten Wert eingeben. Es gilt für dieselbe Bildebene.");
-    if (name === "circle") setStatus("Kreis: Mittelpunkt tippen und Radius ziehen.");
+    if (name === "circle") setStatus("Kreis: Mittelpunkt tippen und Radius ziehen. Danach „Ø an Kreis“ für Durchmesser-Maß.");
+    if (name === "arc") setStatus("Bogen: dreimal tippen – 1) Mittelpunkt, 2) Start, 3) Ende.");
     if (name === "polyline") setStatus("Polylinie: nacheinander Punkte tippen, dann „Polylinie fertig“.");
     syncPolylineActions();
+    syncDiameterButton();
     // Füllregler immer nutzbar (Vorgabe für neue Rechtecke bzw. Änderung des ausgewählten)
     if (typeof syncRectFillControls === "function") {
       const sel = drawings.find((x) => x.id === selectedDrawingId && x.type === "rect");
@@ -1049,6 +1124,46 @@
       const finish = $("polylineFinish");
       if (finish) finish.disabled = !(polylineDraft && polylineDraft.points && polylineDraft.points.length >= 2);
     }
+  }
+
+  function syncDiameterButton() {
+    const btn = $("addDiameterMeasure");
+    if (!btn) return;
+    const c = drawings.find((d) => d.id === selectedDrawingId && d.type === "circle" && layerOf(d) === currentLayer());
+    btn.disabled = !c;
+  }
+
+  /** Ø-Maß an ausgewähltem Kreis */
+  function addDiameterMeasureToSelectedCircle() {
+    const c = drawings.find((d) => d.id === selectedDrawingId && d.type === "circle" && layerOf(d) === currentLayer());
+    if (!c) { toast("Bitte zuerst einen Kreis auswählen."); return; }
+    const r = Math.hypot(c.x2 - c.x1, c.y2 - c.y1);
+    if (!(r > 2)) { toast("Kreis zu klein für Ø-Maß."); return; }
+    remember();
+    const ang = Math.atan2(c.y2 - c.y1, c.x2 - c.x1);
+    const x1 = c.x1 - Math.cos(ang) * r, y1 = c.y1 - Math.sin(ang) * r;
+    const x2 = c.x1 + Math.cos(ang) * r, y2 = c.y1 + Math.sin(ang) * r;
+    const id = nextId++;
+    const m = {
+      id, type: "linear", isReference: false, x1, y1, x2, y2,
+      baseX1: x1, baseY1: y1, baseX2: x2, baseY2: y2,
+      extensionLines: false, endStyle: dimensionEndStyle.value || "slash",
+      endSize: Number(dimensionEndSize.value) || 10,
+      value: "", unit: unitSelect.value || " mm", color: colorInput.value || "#ff3b30",
+      textBg: true, autoCalculated: false, labelPrefix: "Ø", labelSuffix: "",
+      layer: currentLayer()
+    };
+    const val = calculatedValueFor(m, m.unit);
+    if (val !== null) { m.value = val; m.autoCalculated = true; }
+    else if (canvasMode === "sketch" && sketchScalePxPerMm > 0) {
+      m.value = ((2 * r) / sketchScalePxPerMm / unitFactorMm(m.unit)).toFixed(1).replace(/\.0$/, "");
+      m.autoCalculated = true;
+    }
+    measures.push(m);
+    selectedId = id;
+    refresh();
+    if (!m.value) openValueDialog(id, { isNew: true });
+    else setStatus(`Ø-Maß: ${fmt(m.value)}${m.unit || " mm"}`);
   }
 
   // ---------- Referenzmaß / Maßstab ----------
@@ -1202,6 +1317,77 @@
     updateSketchScaleHint();
     refresh(); setStatus(`Rechteck erstellt: ${wMm} × ${hMm} mm. Maßstab aktiv – weitere Maßlinien werden in mm berechnet.`);
   });
+
+  // Korpus-Vorlage: Außenkontur + Boden/Deckel-Linien + Maße
+  $("addKorpusTemplate").addEventListener("click", () => {
+    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe erneut auf „Korpus-Vorlage“."); return; }
+    const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
+    if (!(wMm > 0 && hMm > 0 && Number.isFinite(wMm) && Number.isFinite(hMm))) { alert("Bitte Breite und Höhe größer als 0 mm eingeben."); return; }
+    if (canvasMode !== "sketch") setSketchBackground();
+    let pxPerMm = sketchScalePxPerMm > 0 ? sketchScalePxPerMm : 1;
+    if (!(pxPerMm > 0)) pxPerMm = 1;
+    if (wMm * pxPerMm > SKETCH_MAX_SIDE * 0.85 || hMm * pxPerMm > SKETCH_MAX_SIDE * 0.85) pxPerMm = Math.min(pxPerMm, 0.5);
+    if (wMm * pxPerMm > SKETCH_MAX_SIDE * 0.9 || hMm * pxPerMm > SKETCH_MAX_SIDE * 0.9) pxPerMm = Math.min(pxPerMm, 0.25);
+    const margin = 400;
+    const needW = Math.ceil(wMm * pxPerMm + margin * 2);
+    const needH = Math.ceil(hMm * pxPerMm + margin * 2);
+    if (needW > sketchCanvasW || needH > sketchCanvasH) {
+      sketchCanvasW = Math.min(SKETCH_MAX_SIDE, Math.max(sketchCanvasW, needW));
+      sketchCanvasH = Math.min(SKETCH_MAX_SIDE, Math.max(sketchCanvasH, needH));
+      ensureSketchCanvasSize();
+    }
+    const rw = wMm * pxPerMm, rh = hMm * pxPerMm;
+    const x1 = (canvas.width - rw) / 2, y1 = (canvas.height - rh) / 2;
+    const x2 = x1 + rw, y2 = y1 + rh;
+    const board = Math.max(12, Math.min(rw, rh) * 0.04); // sichtbare Plattenstärke (optisch)
+    remember();
+    const col = colorInput.value || "#ff3b30";
+    const lw = Number(widthInput.value) || 4;
+    const endSt = dimensionEndStyle.value || "slash";
+    const endSz = Number(dimensionEndSize.value) || 10;
+    const extOn = dimensionExtensionLines.checked;
+    // Außenkontur
+    const outerId = nextId++;
+    drawings.push({ id: outerId, type: "rect", x1, y1, x2, y2, color: col, width: lw, fill: false, fillOpacity: 1, rotation: 0, layer: "sketch" });
+    // Deckel (obere Innenlinie)
+    drawings.push({ id: nextId++, type: "line", x1, y1: y1 + board, x2, y2: y1 + board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
+    // Boden (untere Innenlinie)
+    drawings.push({ id: nextId++, type: "line", x1, y1: y2 - board, x2, y2: y2 - board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
+    // Seiten innen (optional, dezent)
+    drawings.push({ id: nextId++, type: "line", x1: x1 + board, y1: y1 + board, x2: x1 + board, y2: y2 - board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
+    drawings.push({ id: nextId++, type: "line", x1: x2 - board, y1: y1 + board, x2: x2 - board, y2: y2 - board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
+    // Beschriftung
+    drawings.push({
+      id: nextId++, type: "text", x1: x1 + 8, y1: y1 - 12,
+      text: `Korpus ${Math.round(wMm)}×${Math.round(hMm)}`, color: col, width: lw,
+      fontSize: getFontSize() + 2, textBg: true, layer: "sketch"
+    });
+    const offset = Math.max(28, Math.min(canvas.width, canvas.height) * 0.045);
+    measures.push({
+      id: nextId++, x1, y1: y2 + offset, x2, y2: y2 + offset,
+      baseX1: x1, baseY1: y2, baseX2: x2, baseY2: y2,
+      type: "linear", value: String(Math.round(wMm * 100) / 100), unit: " mm",
+      color: col, textBg: true, locked: false, labelLocked: false,
+      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "B", labelSuffix: "",
+      endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
+    });
+    measures.push({
+      id: nextId++, x1: x1 - offset, y1, x2: x1 - offset, y2,
+      baseX1: x1, baseY1: y1, baseX2: x1, baseY2: y2,
+      type: "linear", value: String(Math.round(hMm * 100) / 100), unit: " mm",
+      color: col, textBg: true, locked: false, labelLocked: false,
+      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "H", labelSuffix: "",
+      endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
+    });
+    sketchScalePxPerMm = pxPerMm;
+    selectedDrawingId = outerId;
+    selectedId = null;
+    updateSketchScaleHint();
+    refresh();
+    setStatus(`Korpus ${wMm} × ${hMm} mm – Maßstab aktiv. Fachböden/Türen kannst du ergänzen.`);
+  });
+
+  $("addDiameterMeasure").addEventListener("click", () => addDiameterMeasureToSelectedCircle());
 
   // Polylinie abschließen / abbrechen
   $("polylineFinish").addEventListener("click", () => {
@@ -2350,6 +2536,7 @@
     }
 
     if (tool === "angle") { activeDrawing = { type: "angle-point", p }; return; }
+    if (tool === "arc") { activeDrawing = { type: "arc-point", p }; return; }
 
     if (tool === "text") { // Dialog erst beim Loslassen öffnen (sonst kommt die iOS-Tastatur nicht)
       activeDrawing = { type: "text-place", p };
@@ -2466,7 +2653,10 @@
       const dx = p.x - activeDrawing.dx, dy = p.y - activeDrawing.dy, o = activeDrawing.original;
       if (activeDrawing.type === "move-shape") {
         if (d.type === "freehand" || d.type === "polyline") d.points = (o.points || []).map(q => ({x:q.x+dx,y:q.y+dy}));
-        else { d.x1=o.x1+dx; d.y1=o.y1+dy; d.x2=o.x2+dx; d.y2=o.y2+dy; }
+        else {
+          d.x1=o.x1+dx; d.y1=o.y1+dy; d.x2=o.x2+dx; d.y2=o.y2+dy;
+          if (d.type === "arc" && Number.isFinite(o.x3)) { d.x3 = o.x3 + dx; d.y3 = o.y3 + dy; }
+        }
       } else if (d.type === "circle") {
         // Radius am Umfangspunkt ändern, Mittelpunkt bleibt
         d.x2 = p.x; d.y2 = p.y;
@@ -2559,6 +2749,36 @@
       const id=nextId++; pushHistory(beforeAngleTap);
       measures.push({id,type:"angle",x1:v.x,y1:v.y,x2:p1.x,y2:p1.y,x3:p2.x,y3:p2.y,value:angle.toFixed(1),unit:"°",color:colorInput.value,textBg:$("textBgToggle").checked,layer:currentLayer()});
       selectedId=id; setTool("select"); refresh(); setStatus(`Winkel bemaßt: ${angle.toFixed(1).replace(".",",")}°`); return;
+    }
+
+    if (a.type === "arc-point") {
+      const beforeArc = preSnap;
+      let pt = { x: a.p.x, y: a.p.y };
+      pt = refineDrawPoint(pt, arcPoints.length ? arcPoints[arcPoints.length - 1] : null);
+      arcPoints.push(pt);
+      endGesture();
+      if (arcPoints.length < 3) {
+        setStatus(`Bogen: Punkt ${arcPoints.length} von 3 – ${arcPoints.length === 1 ? "Mittelpunkt" : "Start am Bogen"}. Weiter tippen.`);
+        draw();
+        return;
+      }
+      const [c, s, e] = arcPoints;
+      arcPoints = [];
+      const r = Math.hypot(s.x - c.x, s.y - c.y);
+      if (r < scr(8)) { setStatus("Bogen zu klein – erneut versuchen."); draw(); return; }
+      const id = nextId++;
+      pushHistory(beforeArc);
+      drawings.push({
+        id, type: "arc",
+        x1: c.x, y1: c.y, x2: s.x, y2: s.y, x3: e.x, y3: e.y,
+        color: colorInput.value, width: Number(widthInput.value) || 4,
+        layer: currentLayer()
+      });
+      selectedDrawingId = id;
+      setTool("select");
+      refresh();
+      setStatus("Bogen erzeugt.");
+      return;
     }
 
     if (a.type === "text-place") {

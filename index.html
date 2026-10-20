@@ -95,6 +95,7 @@
           <summary>Weitere Zeichenwerkzeuge <span class="summary-hint">Kreis, Polylinie, Winkel, Linie …</span></summary>
           <div class="tool-grid secondary-tools">
             <button class="tool" data-tool="circle" type="button" title="Kreis: Mittelpunkt setzen, Radius ziehen">○ <span>Kreis</span></button>
+            <button class="tool" data-tool="arc" type="button" title="Bogen: Mittelpunkt, Start, Ende tippen">⌒ <span>Bogen</span></button>
             <button class="tool" data-tool="polyline" type="button" title="Polylinie: Punkte tippen, dann Fertig">⌀ <span>Polylinie</span></button>
             <button class="tool" data-tool="angle" type="button">∠ <span>Winkel</span></button>
             <button class="tool" data-tool="freehand" type="button">✎ <span>Freihand</span></button>
@@ -105,7 +106,10 @@
           </div>
         </details>
         <p id="sketchScaleHint" class="hint" hidden></p>
-        <div class="button-row" style="margin-top:8px"><button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button></div>
+        <div class="button-row" style="margin-top:8px">
+          <button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button>
+          <button id="addDiameterMeasure" class="secondary" type="button" disabled title="Ø-Maß an ausgewähltem Kreis">Ø an Kreis</button>
+        </div>
         <div class="dimension-style-row" aria-label="Maßlinien-Darstellung">
           <strong class="dimension-style-title">Maßlinien</strong>
           <label>Enden
@@ -153,13 +157,14 @@
         </details>      </div>
 
       <details class="tool-details dimension-tools">
-        <summary>Maßbasierte Skizze erstellen <span class="summary-hint">Rechteck mit exakten Maßen</span></summary>
+        <summary>Maßbasierte Skizze &amp; Vorlagen <span class="summary-hint">Rechteck, Korpus</span></summary>
         <div class="dimension-form">
           <label>Breite (mm)<input id="sketchWidthMm" type="number" min="1" max="100000" step="1" value="800" inputmode="decimal"></label>
           <label>Höhe (mm)<input id="sketchHeightMm" type="number" min="1" max="100000" step="1" value="600" inputmode="decimal"></label>
           <button id="addDimensionRect" type="button">Rechteck erzeugen</button>
+          <button id="addKorpusTemplate" class="secondary" type="button">Korpus-Vorlage</button>
         </div>
-        <p class="hint">Erzeugt ein maßstäbliches Rechteck mit zwei Maßlinien. Weitere Bauteile kannst du anschließend frei ergänzen.</p>
+        <p class="hint">Rechteck oder Korpus (Außenkontur + Boden/Deckel-Andeutung) mit Breite/Höhe-Maßlinien. Maßstab gilt danach für weitere Maße.</p>
       </details>
       <div class="button-row action-row">
         <button id="undo" class="secondary" type="button" disabled>↶ Zurück</button>
