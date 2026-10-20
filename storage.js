@@ -12,7 +12,7 @@
   const DB_VERSION = 2;
   const STORE_P = "projects";
   const STORE_PH = "photos";
-  const FORMAT_VERSION = 12;          // + Kreis, Polylinie, Skizzen-Maßstab 0 = inaktiv
+  const FORMAT_VERSION = 13;          // + Kreis, Polylinie, Skizzen-Maßstab 0 = inaktiv
   const TRASH_DAYS = 30;
   const UNITS = [" mm", " cm", " m", "°"];
 
@@ -172,7 +172,8 @@
           labelSuffix: cleanText(m.labelSuffix, 24),
           endStyle: typeof m.endStyle === "string" && ["slash", "filled", "open", "hollow", "dot", "tick"].includes(m.endStyle) ? m.endStyle : undefined,
           endSize: isNum(m.endSize) ? Math.max(5, Math.min(20, m.endSize)) : undefined,
-          extensionLines: typeof m.extensionLines === "boolean" ? m.extensionLines : undefined
+          extensionLines: typeof m.extensionLines === "boolean" ? m.extensionLines : undefined,
+          layer: m.layer === "sketch" ? "sketch" : "photo"
         };
         // Basispunkte der Maßhilfslinien (ursprüngliche Bezugspunkte)
         if (isNum(m.baseX1)) out.baseX1 = m.baseX1;
@@ -188,6 +189,7 @@
       .map((d, i) => {
         const out = {
           id: isNum(d.id) ? d.id : 200000 + i, type: d.type,
+          layer: d.layer === "sketch" ? "sketch" : "photo",
           x1: isNum(d.x1) ? d.x1 : 0, y1: isNum(d.y1) ? d.y1 : 0, x2: isNum(d.x2) ? d.x2 : 0, y2: isNum(d.y2) ? d.y2 : 0,
           color: colorOr(d.color),
           width: isNum(d.width) && d.width > 0 ? Math.min(d.width, 40) : 4,
@@ -230,6 +232,8 @@
       savedAt: typeof raw.savedAt === "string" ? raw.savedAt : new Date().toISOString(),
       photoData: raw.photoData,
       canvasMode: raw.canvasMode === "sketch" ? "sketch" : "photo",
+      sketchCanvasW: isNum(raw.sketchCanvasW) && raw.sketchCanvasW > 0 ? Math.min(raw.sketchCanvasW, 12000) : 4000,
+      sketchCanvasH: isNum(raw.sketchCanvasH) && raw.sketchCanvasH > 0 ? Math.min(raw.sketchCanvasH, 12000) : 3000,
       // 0 = kein aktiver Skizzen-Maßstab. Alte Default-1-Werte ohne echten Maßstab werden auf 0 gesetzt.
       sketchScalePxPerMm: (function () {
         const s = isNum(raw.sketchScalePxPerMm) ? raw.sketchScalePxPerMm : 0;

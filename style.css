@@ -610,12 +610,17 @@ body.sketch-mode .dimension-tools { display: block !important; }
 #applyDimensionStyle { opacity:1 !important; cursor:pointer; color:var(--text,#1f2937); background:var(--panel,#f1f5f9); border:1px solid var(--border,#cbd5e1); font-weight:650; box-shadow:0 1px 2px rgba(0,0,0,.08); }
 #applyDimensionStyle:disabled { opacity:.55 !important; cursor:not-allowed; }
 
-/* Skizze+ : Polylinie-Aktionen, Maßstab-Hinweis */
+/* Skizze+ : Polylinie direkt unter Zoom – Zeichenfläche bleibt sichtbar */
 .polyline-actions {
-  margin-top: 8px;
+  margin-top: 6px;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
+}
+.polyline-actions button {
+  min-height: 40px;
+  flex: 1 1 auto;
 }
 .polyline-actions .inline-check {
   display: inline-flex;
@@ -623,9 +628,13 @@ body.sketch-mode .dimension-tools { display: block !important; }
   gap: 6px;
   font-size: .85rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 #sketchScaleHint {
   margin: 6px 0 0;
   color: var(--accent, #176b87);
   font-weight: 600;
+}
+body.sketch-mode .canvas-wrap {
+  background: #e8eef2;
 }

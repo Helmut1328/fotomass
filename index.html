@@ -69,6 +69,11 @@
           Fadenkreuz
         </label>
       </div>
+      <div class="button-row polyline-actions" id="polylineActions" hidden>
+        <button id="polylineFinish" type="button">✓ Fertig</button>
+        <button id="polylineCancel" class="secondary" type="button">Abbrechen</button>
+        <label class="inline-check"><input id="polylineClose" type="checkbox"> Schließen</label>
+      </div>
       <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden neue Maßlinien berechnet</p>
 
       <div class="toolbox">
@@ -90,11 +95,6 @@
             <button class="tool" data-tool="eraser" type="button">⌫ <span>Radierer</span></button>
           </div>
         </details>
-        <div class="button-row polyline-actions" id="polylineActions" hidden>
-          <button id="polylineFinish" type="button">✓ Polylinie fertig</button>
-          <button id="polylineCancel" class="secondary" type="button">Abbrechen</button>
-          <label class="inline-check"><input id="polylineClose" type="checkbox"> Schließen</label>
-        </div>
         <p id="sketchScaleHint" class="hint" hidden></p>
         <div class="button-row" style="margin-top:8px"><button id="quickMeasureLock" class="secondary" type="button" disabled>🔒 Maßlinie sperren</button></div>
         <div class="dimension-style-row" aria-label="Maßlinien-Darstellung">

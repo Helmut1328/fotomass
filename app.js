@@ -54,11 +54,15 @@
   };
 
   // ---------- Zustand ----------
-  const MAX_SIDE = 2000;        // längste Bildseite im Editor
+  const MAX_SIDE = 2000;        // längste Foto-Seite im Editor
+  const SKETCH_DEFAULT_W = 4000; // große Skizzenfläche (Haus 1:1 bei feinem Maßstab + Zoom)
+  const SKETCH_DEFAULT_H = 3000;
   const CROSSHAIR_OFFSET_Y = -52;
   let photoLoaded = false;
   let canvasMode = "photo"; // photo | sketch
   let sketchScalePxPerMm = 0; // 0 = kein Skizzen-Maßstab; gesetzt nach maßbasiertem Rechteck
+  let sketchCanvasW = SKETCH_DEFAULT_W;
+  let sketchCanvasH = SKETCH_DEFAULT_H;
   let polylineDraft = null;   // laufende Polylinie { id, type, points, color, width, closed }
   let photoData = null;         // verkleinertes JPEG (Data-URL) -> wird im Projekt gespeichert
   let originalBlob = null;      // unverändertes Originalfoto (wird zusätzlich getrennt in IndexedDB abgelegt)
@@ -72,6 +76,11 @@
   let measures = [];
   let drawings = [];
   let selectedDrawingId = null;
+  // Foto- und Skizzen-Ebene getrennt: Objekte tragen layer "photo" | "sketch"
+  const currentLayer = () => (canvasMode === "sketch" ? "sketch" : "photo");
+  const layerOf = (o) => (o && o.layer === "sketch" ? "sketch" : "photo");
+  const visibleMeasures = () => measures.filter((m) => layerOf(m) === currentLayer());
+  const visibleDrawings = () => drawings.filter((d) => layerOf(d) === currentLayer());
   let cropSourceImage = null;
   let cropSourceName = "";
   const drawingImageCache = new Map();
@@ -270,18 +279,50 @@
     fitToView();
   }
 
-  function setSketchBackground() {
+  function ensureSketchCanvasSize() {
+    // Große, vom Foto unabhängige Skizzenfläche – Zoom/Pan erlaubt „Haus 1:1“-Arbeitsweise
+    const w = Math.max(SKETCH_DEFAULT_W, sketchCanvasW || SKETCH_DEFAULT_W);
+    const h = Math.max(SKETCH_DEFAULT_H, sketchCanvasH || SKETCH_DEFAULT_H);
+    sketchCanvasW = w;
+    sketchCanvasH = h;
+    if (baseCanvas.width !== w || baseCanvas.height !== h) {
+      baseCanvas.width = canvas.width = w;
+      baseCanvas.height = canvas.height = h;
+      canvasWrap.style.setProperty("--photo-aspect", `${w} / ${h}`);
+    }
     const g = baseCanvas.getContext("2d");
-    g.save(); g.fillStyle = "#ffffff"; g.fillRect(0, 0, baseCanvas.width, baseCanvas.height); g.restore();
+    g.save();
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, w, h);
+    g.restore();
+    photoLoaded = true;
+    canvas.style.display = "block";
+    hideEmptyState();
+  }
+
+  function setSketchBackground() {
+    // Auswahl der anderen Ebene zurücksetzen
+    selectedId = null;
+    selectedDrawingId = null;
+    polylineDraft = null;
+    syncPolylineActions();
+    ensureSketchCanvasSize();
     canvasMode = "sketch";
     document.body.classList.add("sketch-mode");
     $("toggleSketchView").textContent = "▧ Fotoansicht";
     $("toggleSketchView").disabled = false;
-    $("sketchModeHint").textContent = "2D-Skizzenansicht: weißer Zeichenbereich. Die Fotoansicht bleibt im Projekt erhalten.";
+    $("sketchModeHint").textContent = "Skizzenansicht: eigene Ebene, getrennt vom Foto. Große Zeichenfläche – zoomen und schieben. Maße auf dem Foto bleiben unverändert.";
+    fitToView();
+    updateSketchScaleHint();
+    renderMeasureList();
     draw();
   }
 
   function setPhotoBackground() {
+    selectedId = null;
+    selectedDrawingId = null;
+    polylineDraft = null;
+    syncPolylineActions();
     const img = new Image();
     img.onload = () => {
       setBaseFromImage(img);
@@ -289,8 +330,11 @@
       document.body.classList.remove("sketch-mode");
       $("toggleSketchView").textContent = "✎ Skizzenansicht";
       $("toggleSketchView").disabled = false;
-      $("sketchModeHint").textContent = "Fotoansicht: Maße und Zeichnungen liegen über dem Foto. Wechsel jederzeit zur weißen 2D-Skizzenfläche.";
-      draw(); scheduleAutosave();
+      $("sketchModeHint").textContent = "Fotoansicht: nur Foto-Maße und -Zeichnungen. Die Skizzen-Ebene ist getrennt und bleibt erhalten.";
+      updateSketchScaleHint();
+      renderMeasureList();
+      draw();
+      scheduleAutosave();
     };
     img.onerror = () => toast("Fotoansicht konnte nicht geladen werden.");
     img.src = photoData;
@@ -300,9 +344,12 @@
     const k = K();
     g.clearRect(0, 0, g.canvas.width, g.canvas.height);
     g.drawImage(baseCanvas, 0, 0);
-    drawings.forEach((d) => drawShape(g, d, k));
+    // Nur Objekte der aktuellen Ebene (Foto vs. Skizze)
+    const layerDrawings = visibleDrawings();
+    const layerMeasures = visibleMeasures();
+    layerDrawings.forEach((d) => drawShape(g, d, k));
     if (!forExport && selectedDrawingId) {
-      const sd = drawings.find((d) => d.id === selectedDrawingId && (d.type === "image" || d.type === "text"));
+      const sd = layerDrawings.find((d) => d.id === selectedDrawingId && (d.type === "image" || d.type === "text"));
       if (sd) {
         g.save(); g.strokeStyle = "#1682d5"; g.lineWidth = scr(2); g.setLineDash([scr(5), scr(4)]);
         if (sd.type === "image") {
@@ -319,7 +366,7 @@
       }
     }
     if (!forExport && selectedDrawingId) {
-      const sd = drawings.find((d) => d.id === selectedDrawingId && !["image", "text"].includes(d.type));
+      const sd = layerDrawings.find((d) => d.id === selectedDrawingId && !["image", "text"].includes(d.type));
       if (sd) {
         let x1, y1, x2, y2;
         if ((sd.type === "freehand" || sd.type === "polyline") && sd.points && sd.points.length) {
@@ -347,7 +394,7 @@
       polylineDraft.points.forEach((pt) => { g.beginPath(); g.arc(pt.x, pt.y, scr(4), 0, Math.PI * 2); g.fill(); });
       g.restore();
     }
-    measures.forEach((m) => drawMeasure(g, m, k, forExport));
+    layerMeasures.forEach((m) => drawMeasure(g, m, k, forExport));
     if (forExport) return;
     if (tool === "angle" && anglePoints.length) {
       g.save(); g.strokeStyle = colorInput.value; g.fillStyle = colorInput.value; g.lineWidth = 2 * k;
@@ -656,14 +703,14 @@
   function findSnap(p, excludeId) {
     if (!snapToggle.checked) return null;
     let best = null, bestDist = scr(22);
-    measures.forEach((m) => {
+    visibleMeasures().forEach((m) => {
       if (excludeId && m.id === excludeId) return;
       [{ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }].forEach((c) => {
         const d = dist(p, c);
         if (d < bestDist) { bestDist = d; best = c; }
       });
     });
-    drawings.forEach((d) => {
+    visibleDrawings().forEach((d) => {
       if (excludeId && d.id === excludeId) return;
       if (d.type === "circle") {
         [{ x: d.x1, y: d.y1 }, { x: d.x2, y: d.y2 }].forEach((c) => {
@@ -687,23 +734,24 @@
 
   function hitMeasure(p) {
     const endTol = scr(26), lineTol = scr(20);
+    const layerMs = visibleMeasures();
     // Beschriftung vor der Linie prüfen, damit sie unabhängig verschoben werden kann.
-    for (let i=measures.length-1;i>=0;i--) {
-      const m=measures[i], pos=measureLabelPosition(m);
+    for (let i=layerMs.length-1;i>=0;i--) {
+      const m=layerMs[i], pos=measureLabelPosition(m);
       const label=m.type==="angle" ? `${fmt(m.value)}°` : `${m.labelPrefix ? m.labelPrefix + " " : ""}${m.isReference ? "REF · " : ""}${m.value ? fmt(m.value) : "?"}${m.unit || " mm"}${m.labelSuffix ? " " + m.labelSuffix : ""}`;
       const fs=getFontSize()*K(); ctx.save(); ctx.font=`bold ${fs}px system-ui, -apple-system, sans-serif`;
       const halfW=ctx.measureText(label).width/2+scr(12), halfH=fs/2+scr(10); ctx.restore();
       if(Math.abs(p.x-pos.x)<=halfW && Math.abs(p.y-pos.y)<=halfH) return {measure:m,endpoint:0,label:true};
     }
     // Endpunkte nur beim ausgewählten (sichtbare Griffe), nicht gesperrten Maß – schützt vor versehentlichem Verziehen
-    const sel = measures.find((x) => x.id === selectedId);
+    const sel = layerMs.find((x) => x.id === selectedId);
     if (sel && !sel.locked) {
       if (dist(p, { x: sel.x1, y: sel.y1 }) < endTol) return { measure: sel, endpoint: 1 };
       if (dist(p, { x: sel.x2, y: sel.y2 }) < endTol) return { measure: sel, endpoint: 2 };
       if (sel.type === "angle" && dist(p, { x: sel.x3, y: sel.y3 }) < endTol) return { measure: sel, endpoint: 3 };
     }
-    for (let i = measures.length - 1; i >= 0; i--) {
-      const m = measures[i];
+    for (let i = layerMs.length - 1; i >= 0; i--) {
+      const m = layerMs[i];
       if (distanceToSegment(p, m.x1, m.y1, m.x2, m.y2) < lineTol || (m.type === "angle" && distanceToSegment(p, m.x1, m.y1, m.x3, m.y3) < lineTol)) return { measure: m, endpoint: 0 };
     }
     return null;
@@ -713,6 +761,7 @@
     const tol = scr(20), k = K();
     for (let i = drawings.length - 1; i >= 0; i--) {
       const d = drawings[i];
+      if (layerOf(d) !== currentLayer()) continue;
       if (d.type === "image") {
         const x1 = Math.min(d.x1, d.x2), y1 = Math.min(d.y1, d.y2), x2 = Math.max(d.x1, d.x2), y2 = Math.max(d.y1, d.y2);
         if (p.x >= x1 - tol && p.x <= x2 + tol && p.y >= y1 - tol && p.y <= y2 + tol) return i;
@@ -761,14 +810,15 @@
     const ae = document.activeElement;
     if (ae && ae !== document.body && list.contains(ae)) { try { ae.blur(); } catch (_) {} }
     list.replaceChildren();
-    if (!measures.length) {
+    const layerMs = visibleMeasures();
+    if (!layerMs.length) {
       const p = document.createElement("p");
       p.className = "empty-list";
-      p.textContent = "Noch keine Maßlinien.";
+      p.textContent = canvasMode === "sketch" ? "Noch keine Maßlinien in der Skizze." : "Noch keine Maßlinien auf dem Foto.";
       list.append(p);
       return;
     }
-    measures.forEach((m, index) => {
+    layerMs.forEach((m, index) => {
       const row = document.createElement("div");
       row.className = "measure-item" + (m.id === selectedId ? " selected" : "");
 
@@ -854,18 +904,25 @@
   function syncPolylineActions() {
     const bar = $("polylineActions");
     if (!bar) return;
-    bar.hidden = !(tool === "polyline" && polylineDraft && polylineDraft.points && polylineDraft.points.length);
+    const active = tool === "polyline";
+    bar.hidden = !active;
+    if (active) {
+      // Zeichenfläche in den Blick rücken (unter der Zoom-Leiste bleiben die Buttons)
+      try { canvasWrap.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (_) {}
+      const finish = $("polylineFinish");
+      if (finish) finish.disabled = !(polylineDraft && polylineDraft.points && polylineDraft.points.length >= 2);
+    }
   }
 
   // ---------- Referenzmaß / Maßstab ----------
   const unitFactorMm = (unit) => ({ " mm": 1, " cm": 10, " m": 1000 })[unit] || 1;
-  const referenceMeasure = () => measures.find((m) => m.isReference && Number(String(m.value).replace(",", ".")) > 0 && m.type !== "angle");
+  const referenceMeasure = () => visibleMeasures().find((m) => m.isReference && Number(String(m.value).replace(",", ".")) > 0 && m.type !== "angle");
   function updateSketchScaleHint() {
     const el = $("sketchScaleHint");
     if (!el) return;
-    if (sketchScalePxPerMm > 0 && Number.isFinite(sketchScalePxPerMm)) {
+    if (canvasMode === "sketch" && sketchScalePxPerMm > 0 && Number.isFinite(sketchScalePxPerMm)) {
       el.hidden = false;
-      el.textContent = `Skizzen-Maßstab aktiv · neue Maßlinien werden in mm berechnet (${(1 / sketchScalePxPerMm).toFixed(2)} mm/px)`;
+      el.textContent = `Skizzen-Maßstab aktiv · neue Maßlinien in mm (${(1 / sketchScalePxPerMm).toFixed(2)} mm/px) · Zoom/Pan für große Pläne`;
     } else {
       el.hidden = true;
       el.textContent = "";
@@ -884,15 +941,15 @@
         return (lengthMm / unitFactorMm(unit || " mm")).toFixed(1).replace(/\.0$/, "");
       }
     }
-    // 2) Skizzen-Maßstab (nach maßbasiertem Rechteck)
-    if (sketchScalePxPerMm > 0 && Number.isFinite(sketchScalePxPerMm)) {
+    // 2) Skizzen-Maßstab nur in der Skizzenansicht (nach maßbasiertem Rechteck)
+    if (canvasMode === "sketch" && sketchScalePxPerMm > 0 && Number.isFinite(sketchScalePxPerMm)) {
       const lengthMm = px / sketchScalePxPerMm;
       return (lengthMm / unitFactorMm(unit || " mm")).toFixed(1).replace(/\.0$/, "");
     }
     return null;
   }
   function recalculateAutomaticMeasures() {
-    measures.forEach((m) => {
+    visibleMeasures().forEach((m) => {
       if (m.type !== "angle" && !m.isReference && m.autoCalculated) {
         const value = calculatedValueFor(m, m.unit || unitSelect.value);
         if (value !== null) m.value = value;
@@ -900,7 +957,7 @@
     });
   }
   function calculateEmptyMeasuresFromReference() {
-    measures.forEach((m) => {
+    visibleMeasures().forEach((m) => {
       if (m.type !== "angle" && !m.isReference && !String(m.value || "").trim()) {
         const value = calculatedValueFor(m, m.unit || unitSelect.value);
         if (value !== null) { m.value = value; m.autoCalculated = true; }
@@ -915,20 +972,27 @@
     resetState();
     projectId = storage.newId(); projectCreated = new Date().toISOString(); originalBlob = null;
     $("projectName").value = "2D-Skizze " + new Date().toLocaleDateString("de-DE");
-    const blank = document.createElement("canvas"); blank.width = 1200; blank.height = 800;
-    const bg = blank.getContext("2d"); bg.fillStyle = "#ffffff"; bg.fillRect(0, 0, blank.width, blank.height);
+    sketchCanvasW = SKETCH_DEFAULT_W;
+    sketchCanvasH = SKETCH_DEFAULT_H;
+    sketchScalePxPerMm = 0;
+    // Minimales Platzhalter-Foto nur für Projektstruktur; Skizzenfläche ist unabhängig und größer
+    const blank = document.createElement("canvas"); blank.width = 16; blank.height = 16;
+    const bg = blank.getContext("2d"); bg.fillStyle = "#ffffff"; bg.fillRect(0, 0, 16, 16);
     photoData = blank.toDataURL("image/png");
-    const img = new Image();
-    img.onload = () => {
-      setBaseFromImage(img); canvasMode = "sketch"; sketchScalePxPerMm = 0;
-      setSketchBackground(); $("photoStatus").textContent = "Leere 2D-Skizze";
-      $("toggleSketchView").disabled = false; renderMeasureList(); setReady(true); refresh();
-      updateSketchScaleHint();
-      setStatus("Neue 2D-Skizze angelegt. Maßbasiertes Rechteck setzt den Maßstab – danach werden neue Maße in mm berechnet.");
-      flushAutosave();
-    };
-    img.onerror = () => setStatus("Skizzenfläche konnte nicht erstellt werden.");
-    img.src = photoData;
+    ensureSketchCanvasSize();
+    canvasMode = "sketch";
+    document.body.classList.add("sketch-mode");
+    $("toggleSketchView").textContent = "▧ Fotoansicht";
+    $("toggleSketchView").disabled = true; // kein echtes Foto
+    $("photoStatus").textContent = "Leere 2D-Skizze";
+    $("sketchModeHint").textContent = "Große Skizzenfläche (4000×3000 px). Zoomen & schieben – Maßstab per Rechteck setzen. Eigene Ebene, getrennt vom Foto.";
+    updateSketchScaleHint();
+    renderMeasureList();
+    setReady(true);
+    fitToView();
+    refresh();
+    setStatus("Neue 2D-Skizze angelegt. Maßbasiertes Rechteck setzt den Maßstab – Zeichnungen liegen nur in der Skizzen-Ebene.");
+    flushAutosave();
   });
 
   $("toggleSketchView").addEventListener("click", () => {
@@ -954,7 +1018,7 @@
     const endSt = dimensionEndStyle.value || "slash";
     const endSz = Number(dimensionEndSize.value) || 10;
     const extOn = dimensionExtensionLines.checked;
-    drawings.push({ id, type: "rect", x1, y1, x2, y2, color: col, width: Number(widthInput.value) || 4, fill: false, fillOpacity: 1, rotation: 0 });
+    drawings.push({ id, type: "rect", x1, y1, x2, y2, color: col, width: Number(widthInput.value) || 4, fill: false, fillOpacity: 1, rotation: 0, layer: "sketch" });
     const offset = Math.max(28, Math.min(canvas.width, canvas.height) * 0.045);
     // Breite: Maßlinie unter dem Rechteck, Hilfslinien von der Unterkante
     measures.push({
@@ -963,7 +1027,7 @@
       type: "linear", value: String(Math.round(wMm * 100) / 100), unit: " mm",
       color: col, textBg: true, locked: false, labelLocked: false,
       labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "", labelSuffix: "",
-      endStyle: endSt, endSize: endSz, extensionLines: extOn
+      endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
     });
     // Höhe: Maßlinie links vom Rechteck, Hilfslinien von der linken Kante
     measures.push({
@@ -972,7 +1036,7 @@
       type: "linear", value: String(Math.round(hMm * 100) / 100), unit: " mm",
       color: col, textBg: true, locked: false, labelLocked: false,
       labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "", labelSuffix: "",
-      endStyle: endSt, endSize: endSz, extensionLines: extOn
+      endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
     });
     sketchScalePxPerMm = pxPerMm; selectedDrawingId = id; selectedId = null;
     updateSketchScaleHint();
@@ -993,7 +1057,8 @@
       points: polylineDraft.points.map((q) => ({ x: q.x, y: q.y })),
       color: polylineDraft.color,
       width: polylineDraft.width || 4,
-      closed
+      closed,
+      layer: currentLayer()
     });
     selectedDrawingId = polylineDraft.id;
     polylineDraft = null;
@@ -1033,7 +1098,7 @@
     return {
       version: storage.FORMAT_VERSION, app: "FotoMaß",
       id: projectId, projectName: $("projectName").value, created: projectCreated, savedAt: new Date().toISOString(),
-      photoData, canvasMode, sketchScalePxPerMm, measures, drawings, nextId,
+      photoData, canvasMode, sketchScalePxPerMm, sketchCanvasW, sketchCanvasH, measures, drawings, nextId,
       unit: unitSelect.value, snap: snapToggle.checked, fontSize: getFontSize(),
       dimensionEndStyle: dimensionEndStyle.value, dimensionEndSize: Number(dimensionEndSize.value) || 10,
       dimensionExtensionLines: dimensionExtensionLines.checked,
@@ -1103,11 +1168,14 @@
         photoData = sameSize ? p.photoData : baseCanvas.toDataURL("image/jpeg", 0.9);
         canvasMode = p.canvasMode === "sketch" ? "sketch" : "photo";
         sketchScalePxPerMm = Number(p.sketchScalePxPerMm) > 0 ? Number(p.sketchScalePxPerMm) : 0;
-        if (canvasMode === "sketch") setSketchBackground(); else { document.body.classList.remove("sketch-mode"); $("toggleSketchView").textContent = "✎ Skizzenansicht"; $("toggleSketchView").disabled = false; }
+        sketchCanvasW = Number(p.sketchCanvasW) > 0 ? Number(p.sketchCanvasW) : SKETCH_DEFAULT_W;
+        sketchCanvasH = Number(p.sketchCanvasH) > 0 ? Number(p.sketchCanvasH) : SKETCH_DEFAULT_H;
         projectId = p.id; projectCreated = p.created;
         originalBlob = original || null;
         measures = p.measures; drawings = p.drawings; nextId = p.nextId;
         polylineDraft = null;
+        if (canvasMode === "sketch") setSketchBackground();
+        else { document.body.classList.remove("sketch-mode"); $("toggleSketchView").textContent = "✎ Skizzenansicht"; $("toggleSketchView").disabled = false; }
         $("projectName").value = p.projectName;
         $("photoStatus").textContent = p.projectName || "Projekt geöffnet";
         unitSelect.value = p.unit; snapToggle.checked = p.snap; fontSizeInput.value = p.fontSize;
@@ -1486,7 +1554,7 @@
       }
     } else if (txt && pendingTextPoint) {
       remember();
-      const d = { id: nextId++, type: "text", x1: pendingTextPoint.x, y1: pendingTextPoint.y, text: txt, color: textDialogColor.value || colorInput.value, width: Number(widthInput.value), fontSize: Number(textDialogSize.value) || getFontSize()+4, textBg: textDialogBg.checked };
+      const d = { id: nextId++, type: "text", x1: pendingTextPoint.x, y1: pendingTextPoint.y, text: txt, color: textDialogColor.value || colorInput.value, width: Number(widthInput.value), fontSize: Number(textDialogSize.value) || getFontSize()+4, textBg: textDialogBg.checked, layer: currentLayer() };
       drawings.push(d); selectedDrawingId = d.id; selectedId = null; refresh();
     }
     closeTextDialog(); draw();
@@ -1809,7 +1877,7 @@
     const w=Math.min(canvas.width*0.38,480), h=w*c.height/c.width;
     const x=Math.max(0,(canvas.width-w)/2), y=Math.max(0,(canvas.height-h)/2);
     remember(); const id=nextId++;
-    const item={id,type:"image",x1:x,y1:y,x2:x+w,y2:y+h,imageData,sourceName:cropSourceName};
+    const item={id,type:"image",x1:x,y1:y,x2:x+w,y2:y+h,imageData,sourceName:cropSourceName,layer:currentLayer()};
     drawings.push(item); drawingImageCache.delete(id); selectedDrawingId=id; selectedId=null;
     closeCropDialog(); setTool("select"); refresh(); setStatus("Bild eingefügt. Mit Auswählen verschieben; an der unteren rechten Ecke standardmäßig proportional skalieren. Freie Verzerrung lässt sich unten einschalten.");
   });
@@ -1818,13 +1886,18 @@
   buttons.undo.addEventListener("click", undo);
   buttons.redo.addEventListener("click", redo);
   buttons.clear.addEventListener("click", () => {
-    const keep = measures.filter(isLocked);
-    if (!confirm("Alle Maßlinien und Zeichnungen löschen?" + (keep.length ? "\n(" + keep.length + " gesperrte Maße bleiben erhalten.)" : ""))) return;
+    const layer = currentLayer();
+    const keep = measures.filter((m) => isLocked(m) || layerOf(m) !== layer);
+    const otherDrawings = drawings.filter((d) => layerOf(d) !== layer);
+    const layerName = layer === "sketch" ? "Skizzen-Ebene" : "Foto-Ebene";
+    if (!confirm("Alles auf der " + layerName + " löschen?" + (keep.filter(isLocked).length ? "\n(Gesperrte Maße bleiben erhalten.)" : ""))) return;
     remember();
-    measures = keep; drawings = []; selectedId = null; selectedDrawingId = null; snapPoint = null; polylineDraft = null;
+    measures = keep;
+    drawings = otherDrawings;
+    selectedId = null; selectedDrawingId = null; snapPoint = null; polylineDraft = null;
     syncPolylineActions();
     refresh();
-    toast("Alles gelöscht.", "Rückgängig", undo, 8000);
+    toast(layerName + " gelöscht.", "Rückgängig", undo, 8000);
   });
   $("styleToggle").addEventListener("click", () => {
     document.body.classList.toggle("site-bold");
@@ -2112,7 +2185,8 @@
       if (!polylineDraft) {
         polylineDraft = {
           id: nextId++, type: "polyline", points: [{ x: p.x, y: p.y }],
-          color: colorInput.value, width: Number(widthInput.value) || 4, closed: false
+          color: colorInput.value, width: Number(widthInput.value) || 4, closed: false,
+          layer: currentLayer()
         };
       } else {
         const last = polylineDraft.points[polylineDraft.points.length - 1];
@@ -2135,7 +2209,8 @@
       points: tool === "freehand" ? [p] : undefined,
       fill: (tool === "rect" || tool === "circle") ? !!(rectFillToggle && rectFillToggle.checked) : false,
       fillOpacity: (tool === "rect" || tool === "circle") && rectFillOpacity ? Number(rectFillOpacity.value) / 100 : 1,
-      value: "", unit: unitSelect.value
+      value: "", unit: unitSelect.value,
+      layer: currentLayer()
     };
   }
 
@@ -2302,7 +2377,7 @@
       const a1=Math.atan2(p1.y-v.y,p1.x-v.x), a2=Math.atan2(p2.y-v.y,p2.x-v.x);
       const angle=Math.abs(Math.atan2(Math.sin(a2-a1),Math.cos(a2-a1)))*180/Math.PI;
       const id=nextId++; pushHistory(beforeAngleTap);
-      measures.push({id,type:"angle",x1:v.x,y1:v.y,x2:p1.x,y2:p1.y,x3:p2.x,y3:p2.y,value:angle.toFixed(1),unit:"°",color:colorInput.value,textBg:$("textBgToggle").checked});
+      measures.push({id,type:"angle",x1:v.x,y1:v.y,x2:p1.x,y2:p1.y,x3:p2.x,y3:p2.y,value:angle.toFixed(1),unit:"°",color:colorInput.value,textBg:$("textBgToggle").checked,layer:currentLayer()});
       selectedId=id; setTool("select"); refresh(); setStatus(`Winkel bemaßt: ${angle.toFixed(1).replace(".",",")}°`); return;
     }
 
@@ -2356,7 +2431,7 @@
     let newMeasureId = null;
     if (a.type === "measure" || a.type === "reference") {
       const isRef = a.type === "reference";
-      const m = { id: a.id, type: isRef ? "reference" : "linear", isReference: isRef, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, baseX1: a.x1, baseY1: a.y1, baseX2: a.x2, baseY2: a.y2, extensionLines: dimensionExtensionLines.checked, endStyle: dimensionEndStyle.value, endSize: Number(dimensionEndSize.value) || 10, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked, autoCalculated: false };
+      const m = { id: a.id, type: isRef ? "reference" : "linear", isReference: isRef, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, baseX1: a.x1, baseY1: a.y1, baseX2: a.x2, baseY2: a.y2, extensionLines: dimensionExtensionLines.checked, endStyle: dimensionEndStyle.value, endSize: Number(dimensionEndSize.value) || 10, value: "", unit: a.unit || unitSelect.value, color: a.color, textBg: $("textBgToggle").checked, autoCalculated: false, layer: currentLayer() };
       if (!isRef) {
         const value = calculatedValueFor(m, m.unit);
         if (value !== null) { m.value = value; m.autoCalculated = true; }
@@ -2365,6 +2440,7 @@
       selectedId = a.id;
       newMeasureId = a.id;
     } else {
+      a.layer = currentLayer();
       drawings.push(a);
     }
     endGesture();
