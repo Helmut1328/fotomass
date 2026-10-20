@@ -74,7 +74,12 @@
         <button id="polylineCancel" class="secondary" type="button">Abbrechen</button>
         <label class="inline-check"><input id="polylineClose" type="checkbox"> Schließen</label>
       </div>
-      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben<br>Referenz: bekannte Strecke zeichnen und Wert eingeben · danach werden neue Maßlinien berechnet</p>
+      <div class="button-row cad-bar" id="cadBar">
+        <label class="inline-check" title="Nur waagrecht oder senkrecht zeichnen"><input id="orthoToggle" type="checkbox"> Ortho</label>
+        <label class="inline-check" title="Raster in der Skizze"><input id="gridToggle" type="checkbox" checked> Raster</label>
+        <label class="cad-grid-mm">Raster <input id="gridMmInput" type="number" min="10" max="1000" step="10" value="100" inputmode="numeric"> mm</label>
+      </div>
+      <p class="hint touch-hint">1 Finger = Werkzeug · 2 Finger = zoomen &amp; schieben · Ortho = nur H/V<br>Referenz oder maßbasiertes Rechteck setzt den Maßstab</p>
 
       <div class="toolbox">
         <div class="tool-grid primary-tools" aria-label="Hauptwerkzeuge">

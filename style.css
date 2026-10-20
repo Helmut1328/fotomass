@@ -638,3 +638,35 @@ body.sketch-mode .dimension-tools { display: block !important; }
 body.sketch-mode .canvas-wrap {
   background: #e8eef2;
 }
+
+/* CAD-Leiste: Ortho + Raster */
+.cad-bar {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  font-size: .86rem;
+  font-weight: 600;
+}
+.cad-bar .inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cad-grid-mm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted, #637585);
+}
+.cad-grid-mm input {
+  width: 4.2rem;
+  min-height: 36px;
+  border: 1px solid var(--line, #dce5eb);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font: inherit;
+}
+body.sketch-mode .cad-bar { opacity: 1; }
+body:not(.sketch-mode) .cad-grid-mm { opacity: .55; }

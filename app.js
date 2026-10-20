@@ -55,15 +55,20 @@
 
   // ---------- Zustand ----------
   const MAX_SIDE = 2000;        // längste Foto-Seite im Editor
-  const SKETCH_DEFAULT_W = 4000; // große Skizzenfläche (Haus 1:1 bei feinem Maßstab + Zoom)
-  const SKETCH_DEFAULT_H = 3000;
+  const SKETCH_DEFAULT_W = 10000; // sehr große Skizzenfläche (Hausmaßstäbe + Zoom)
+  const SKETCH_DEFAULT_H = 8000;
+  const SKETCH_MAX_SIDE = 20000;
   const CROSSHAIR_OFFSET_Y = -52;
   let photoLoaded = false;
+  let hasRealPhoto = false;     // echtes Foto (nicht nur Platzhalter-Skizze)
   let canvasMode = "photo"; // photo | sketch
   let sketchScalePxPerMm = 0; // 0 = kein Skizzen-Maßstab; gesetzt nach maßbasiertem Rechteck
   let sketchCanvasW = SKETCH_DEFAULT_W;
   let sketchCanvasH = SKETCH_DEFAULT_H;
   let polylineDraft = null;   // laufende Polylinie { id, type, points, color, width, closed }
+  let orthoMode = false;      // CAD: nur waagrecht/senkrecht
+  let gridEnabled = true;     // CAD: Raster in der Skizze
+  let gridMm = 100;           // Rasterabstand in mm (wenn Maßstab aktiv), sonst 50 px
   let photoData = null;         // verkleinertes JPEG (Data-URL) -> wird im Projekt gespeichert
   let originalBlob = null;      // unverändertes Originalfoto (wird zusätzlich getrennt in IndexedDB abgelegt)
   let projectId = null;         // Projekt-ID (Schlüssel in der Datenbank – nie der Name)
@@ -274,15 +279,18 @@
     canvasWrap.style.setProperty("--photo-aspect", `${baseCanvas.width} / ${baseCanvas.height}`);
     baseCanvas.getContext("2d").drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
     photoLoaded = true;
+    hasRealPhoto = Math.max(nw, nh) > 64;
     canvas.style.display = "block";
     hideEmptyState();
     fitToView();
   }
 
   function ensureSketchCanvasSize() {
-    // Große, vom Foto unabhängige Skizzenfläche – Zoom/Pan erlaubt „Haus 1:1“-Arbeitsweise
-    const w = Math.max(SKETCH_DEFAULT_W, sketchCanvasW || SKETCH_DEFAULT_W);
-    const h = Math.max(SKETCH_DEFAULT_H, sketchCanvasH || SKETCH_DEFAULT_H);
+    // Sehr große, vom Foto unabhängige Skizzenfläche
+    let w = Math.max(SKETCH_DEFAULT_W, sketchCanvasW || SKETCH_DEFAULT_W);
+    let h = Math.max(SKETCH_DEFAULT_H, sketchCanvasH || SKETCH_DEFAULT_H);
+    w = Math.min(SKETCH_MAX_SIDE, w);
+    h = Math.min(SKETCH_MAX_SIDE, h);
     sketchCanvasW = w;
     sketchCanvasH = h;
     if (baseCanvas.width !== w || baseCanvas.height !== h) {
@@ -298,6 +306,76 @@
     photoLoaded = true;
     canvas.style.display = "block";
     hideEmptyState();
+  }
+
+  /** Fläche bei Bedarf erweitern (Zeichnen nahe dem Rand) */
+  function expandSketchIfNeeded(x, y, margin) {
+    if (canvasMode !== "sketch") return false;
+    margin = margin || 200;
+    let w = sketchCanvasW, h = sketchCanvasH, grew = false;
+    if (x > w - margin && w < SKETCH_MAX_SIDE) { w = Math.min(SKETCH_MAX_SIDE, w + Math.max(1000, Math.floor(w * 0.25))); grew = true; }
+    if (y > h - margin && h < SKETCH_MAX_SIDE) { h = Math.min(SKETCH_MAX_SIDE, h + Math.max(1000, Math.floor(h * 0.25))); grew = true; }
+    if (x < margin || y < margin) {
+      // Inhalt nach rechts/unten verschieben, links/oben erweitern
+      const addX = x < margin ? Math.max(1000, Math.floor(w * 0.2)) : 0;
+      const addY = y < margin ? Math.max(1000, Math.floor(h * 0.2)) : 0;
+      if (addX || addY) {
+        shiftSketchContent(addX, addY);
+        w = Math.min(SKETCH_MAX_SIDE, w + addX);
+        h = Math.min(SKETCH_MAX_SIDE, h + addY);
+        grew = true;
+      }
+    }
+    if (!grew) return false;
+    sketchCanvasW = w; sketchCanvasH = h;
+    ensureSketchCanvasSize();
+    fitToView();
+    return true;
+  }
+
+  function shiftSketchContent(dx, dy) {
+    if (!(dx || dy)) return;
+    measures.forEach((m) => {
+      if (layerOf(m) !== "sketch") return;
+      m.x1 += dx; m.y1 += dy; m.x2 += dx; m.y2 += dy;
+      if (Number.isFinite(m.x3)) { m.x3 += dx; m.y3 += dy; }
+      if (Number.isFinite(m.baseX1)) { m.baseX1 += dx; m.baseY1 += dy; m.baseX2 += dx; m.baseY2 += dy; }
+    });
+    drawings.forEach((d) => {
+      if (layerOf(d) !== "sketch") return;
+      if (d.points) d.points.forEach((pt) => { pt.x += dx; pt.y += dy; });
+      if (Number.isFinite(d.x1)) { d.x1 += dx; d.y1 += dy; }
+      if (Number.isFinite(d.x2)) { d.x2 += dx; d.y2 += dy; }
+    });
+    if (polylineDraft && polylineDraft.points) polylineDraft.points.forEach((pt) => { pt.x += dx; pt.y += dy; });
+  }
+
+  function applyOrtho(from, to) {
+    if (!orthoMode || !from) return to;
+    const dx = Math.abs(to.x - from.x), dy = Math.abs(to.y - from.y);
+    if (dx >= dy) return { x: to.x, y: from.y };
+    return { x: from.x, y: to.y };
+  }
+
+  function gridStepPx() {
+    if (canvasMode === "sketch" && sketchScalePxPerMm > 0) return Math.max(4, gridMm * sketchScalePxPerMm);
+    return 50;
+  }
+
+  function snapToGridPoint(p) {
+    if (!gridEnabled || canvasMode !== "sketch") return p;
+    const step = gridStepPx();
+    return { x: Math.round(p.x / step) * step, y: Math.round(p.y / step) * step };
+  }
+
+  /** CAD-Hilfen: Einrasten → Raster → Ortho (Ortho zuletzt, damit H/V erhalten bleibt) */
+  function refineDrawPoint(p, fromPoint) {
+    const sn = findSnap(p);
+    if (sn) { snapPoint = sn; p = { x: sn.x, y: sn.y }; }
+    else snapPoint = null;
+    if (gridEnabled && canvasMode === "sketch" && !sn) p = snapToGridPoint(p);
+    if (fromPoint) p = applyOrtho(fromPoint, p);
+    return p;
   }
 
   function setSketchBackground() {
@@ -344,6 +422,18 @@
     const k = K();
     g.clearRect(0, 0, g.canvas.width, g.canvas.height);
     g.drawImage(baseCanvas, 0, 0);
+    // CAD-Raster nur in der Skizze
+    if (!forExport && canvasMode === "sketch" && gridEnabled) {
+      const step = gridStepPx();
+      g.save();
+      g.strokeStyle = "rgba(120,140,160,0.28)";
+      g.lineWidth = Math.max(1, 1 * k);
+      g.beginPath();
+      for (let x = 0; x <= g.canvas.width; x += step) { g.moveTo(x, 0); g.lineTo(x, g.canvas.height); }
+      for (let y = 0; y <= g.canvas.height; y += step) { g.moveTo(0, y); g.lineTo(g.canvas.width, y); }
+      g.stroke();
+      g.restore();
+    }
     // Nur Objekte der aktuellen Ebene (Foto vs. Skizze)
     const layerDrawings = visibleDrawings();
     const layerMeasures = visibleMeasures();
@@ -404,6 +494,34 @@
     if (activeDrawing && !/^(move-|text-place|angle-point)/.test(activeDrawing.type)) {
       if (activeDrawing.type === "measure" || activeDrawing.type === "reference") drawMeasurePreview(g, activeDrawing, k);
       else drawShape(g, activeDrawing, k);
+      // CAD: Live-Länge / Radius während des Zeichnens
+      const ad = activeDrawing;
+      if (ad && Number.isFinite(ad.x1) && Number.isFinite(ad.x2)) {
+        let pxLen = Math.hypot(ad.x2 - ad.x1, ad.y2 - ad.y1);
+        if (ad.type === "circle") pxLen = Math.hypot(ad.x2 - ad.x1, ad.y2 - ad.y1);
+        if (pxLen > 2) {
+          let label = Math.round(pxLen) + " px";
+          if (canvasMode === "sketch" && sketchScalePxPerMm > 0) {
+            const mm = pxLen / sketchScalePxPerMm;
+            label = ad.type === "circle"
+              ? `Ø ${(mm * 2).toFixed(0)} mm  R ${mm.toFixed(0)} mm`
+              : `${mm.toFixed(0)} mm`;
+          } else if (ad.type === "circle") {
+            label = `r ${Math.round(pxLen)} px`;
+          }
+          g.save();
+          g.font = `bold ${Math.max(12, 14 * k)}px system-ui, sans-serif`;
+          g.fillStyle = "rgba(255,255,255,0.92)";
+          const tw = g.measureText(label).width;
+          const lx = (ad.x1 + ad.x2) / 2, ly = (ad.y1 + ad.y2) / 2 - 16 * k;
+          g.fillRect(lx - tw / 2 - 6, ly - 12 * k, tw + 12, 20 * k);
+          g.fillStyle = "#176b87";
+          g.textAlign = "center";
+          g.textBaseline = "middle";
+          g.fillText(label, lx, ly);
+          g.restore();
+        }
+      }
     }
     if (snapPoint) {
       g.save();
@@ -968,35 +1086,48 @@
 
   // ---------- 2D-Skizzenmodus ----------
   $("newSketch").addEventListener("click", async () => {
-    if (!(await leaveCurrentProject())) return;
+    // Bestehendes Foto-Projekt: nur in die Skizzen-Ebene wechseln – nichts löschen
+    if (photoLoaded && hasRealPhoto) {
+      if (canvasMode !== "sketch") setSketchBackground();
+      $("toggleSketchView").disabled = false;
+      setStatus("Skizzen-Ebene geöffnet. Foto und Foto-Maße bleiben in der Fotoansicht erhalten.");
+      scheduleAutosave();
+      return;
+    }
+    // Wirklich neues Skizzen-Projekt (kein Foto geladen)
+    if (photoLoaded && hasWork() && !(await leaveCurrentProject())) return;
     resetState();
     projectId = storage.newId(); projectCreated = new Date().toISOString(); originalBlob = null;
+    hasRealPhoto = false;
     $("projectName").value = "2D-Skizze " + new Date().toLocaleDateString("de-DE");
     sketchCanvasW = SKETCH_DEFAULT_W;
     sketchCanvasH = SKETCH_DEFAULT_H;
     sketchScalePxPerMm = 0;
-    // Minimales Platzhalter-Foto nur für Projektstruktur; Skizzenfläche ist unabhängig und größer
-    const blank = document.createElement("canvas"); blank.width = 16; blank.height = 16;
-    const bg = blank.getContext("2d"); bg.fillStyle = "#ffffff"; bg.fillRect(0, 0, 16, 16);
+    const blank = document.createElement("canvas"); blank.width = 32; blank.height = 32;
+    const bg = blank.getContext("2d"); bg.fillStyle = "#ffffff"; bg.fillRect(0, 0, 32, 32);
     photoData = blank.toDataURL("image/png");
     ensureSketchCanvasSize();
     canvasMode = "sketch";
     document.body.classList.add("sketch-mode");
     $("toggleSketchView").textContent = "▧ Fotoansicht";
-    $("toggleSketchView").disabled = true; // kein echtes Foto
+    $("toggleSketchView").disabled = true;
     $("photoStatus").textContent = "Leere 2D-Skizze";
-    $("sketchModeHint").textContent = "Große Skizzenfläche (4000×3000 px). Zoomen & schieben – Maßstab per Rechteck setzen. Eigene Ebene, getrennt vom Foto.";
+    $("sketchModeHint").textContent = "Große Skizzenfläche (10 000×8 000 px, wächst bei Bedarf). Raster + Ortho unter den Werkzeugen. Maßstab per Rechteck setzen.";
     updateSketchScaleHint();
     renderMeasureList();
     setReady(true);
     fitToView();
     refresh();
-    setStatus("Neue 2D-Skizze angelegt. Maßbasiertes Rechteck setzt den Maßstab – Zeichnungen liegen nur in der Skizzen-Ebene.");
+    setStatus("Neue 2D-Skizze angelegt. Zeichnen mit Raster/Ortho – Fläche erweitert sich am Rand automatisch.");
     flushAutosave();
   });
 
   $("toggleSketchView").addEventListener("click", () => {
     if (!photoLoaded || !photoData) return;
+    if (!hasRealPhoto && canvasMode === "sketch") {
+      toast("Kein Foto in diesem Projekt – nur Skizzenansicht.");
+      return;
+    }
     if (canvasMode === "sketch") setPhotoBackground();
     else { setSketchBackground(); scheduleAutosave(); }
   });
@@ -1006,9 +1137,19 @@
     const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
     if (!(wMm > 0 && hMm > 0 && Number.isFinite(wMm) && Number.isFinite(hMm))) { alert("Bitte Breite und Höhe größer als 0 mm eingeben."); return; }
     if (canvasMode !== "sketch") setSketchBackground();
-    const marginX = canvas.width * 0.12, marginY = canvas.height * 0.14;
-    const pxPerMm = Math.min((canvas.width - marginX * 2) / wMm, (canvas.height - marginY * 2) / hMm);
-    if (!(pxPerMm > 0) || !Number.isFinite(pxPerMm)) { alert("Diese Maße passen nicht auf die Zeichenfläche."); return; }
+    // Fester, lesbarer Maßstab (nicht „alles reinquetschen“): ca. 1 px/mm, bei sehr großen Teilen 0.5
+    let pxPerMm = sketchScalePxPerMm > 0 ? sketchScalePxPerMm : 1;
+    if (!(pxPerMm > 0)) pxPerMm = 1;
+    if (wMm * pxPerMm > SKETCH_MAX_SIDE * 0.85 || hMm * pxPerMm > SKETCH_MAX_SIDE * 0.85) pxPerMm = Math.min(pxPerMm, 0.5);
+    if (wMm * pxPerMm > SKETCH_MAX_SIDE * 0.9 || hMm * pxPerMm > SKETCH_MAX_SIDE * 0.9) pxPerMm = Math.min(pxPerMm, 0.25);
+    const margin = 400;
+    const needW = Math.ceil(wMm * pxPerMm + margin * 2);
+    const needH = Math.ceil(hMm * pxPerMm + margin * 2);
+    if (needW > sketchCanvasW || needH > sketchCanvasH) {
+      sketchCanvasW = Math.min(SKETCH_MAX_SIDE, Math.max(sketchCanvasW, needW));
+      sketchCanvasH = Math.min(SKETCH_MAX_SIDE, Math.max(sketchCanvasH, needH));
+      ensureSketchCanvasSize();
+    }
     const rw = wMm * pxPerMm, rh = hMm * pxPerMm;
     const x1 = (canvas.width - rw) / 2, y1 = (canvas.height - rh) / 2;
     const x2 = x1 + rw, y2 = y1 + rh;
@@ -1071,6 +1212,24 @@
     syncPolylineActions();
     draw();
     setStatus("Polylinie verworfen.");
+  });
+
+  // CAD-Hilfen: Ortho + Raster
+  const orthoToggle = $("orthoToggle");
+  const gridToggle = $("gridToggle");
+  const gridMmInput = $("gridMmInput");
+  if (orthoToggle) orthoToggle.addEventListener("change", () => {
+    orthoMode = !!orthoToggle.checked;
+    setStatus(orthoMode ? "Ortho an – nur waagrecht/senkrecht." : "Ortho aus.");
+  });
+  if (gridToggle) gridToggle.addEventListener("change", () => {
+    gridEnabled = !!gridToggle.checked;
+    draw();
+  });
+  if (gridMmInput) gridMmInput.addEventListener("change", () => {
+    const v = Number(gridMmInput.value);
+    if (v >= 10 && v <= 1000) gridMm = v;
+    draw();
   });
 
   // ---------- Projekt: anlegen, sichern, öffnen ----------
@@ -1211,7 +1370,7 @@
 
   // Editor leeren (z. B. wenn das geöffnete Projekt in den Papierkorb kommt)
   function closeProject() {
-    photoLoaded = false; canvasMode = "photo"; sketchScalePxPerMm = 0; projectId = null; photoData = null; originalBlob = null; polylineDraft = null;
+    photoLoaded = false; hasRealPhoto = false; canvasMode = "photo"; sketchScalePxPerMm = 0; projectId = null; photoData = null; originalBlob = null; polylineDraft = null;
     document.body.classList.remove("sketch-mode"); $("toggleSketchView").disabled = true;
     resetState();
     canvas.style.display = "none";
@@ -2180,8 +2339,10 @@
 
     // Polylinie: jeder Tipp setzt einen Punkt; Abschluss über „Fertig“
     if (tool === "polyline") {
-      const sn = findSnap(p);
-      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
+      const last = polylineDraft && polylineDraft.points && polylineDraft.points.length
+        ? polylineDraft.points[polylineDraft.points.length - 1] : null;
+      p = refineDrawPoint(p, last);
+      expandSketchIfNeeded(p.x, p.y);
       if (!polylineDraft) {
         polylineDraft = {
           id: nextId++, type: "polyline", points: [{ x: p.x, y: p.y }],
@@ -2189,7 +2350,6 @@
           layer: currentLayer()
         };
       } else {
-        const last = polylineDraft.points[polylineDraft.points.length - 1];
         if (dist(last, p) > scr(6)) polylineDraft.points.push({ x: p.x, y: p.y });
       }
       syncPolylineActions();
@@ -2198,9 +2358,9 @@
       return;
     }
 
-    if (tool === "measure" || tool === "reference" || tool === "circle") {
-      const sn = findSnap(p);
-      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; }
+    if (["measure", "reference", "circle", "line", "rect", "freehand"].includes(tool)) {
+      p = refineDrawPoint(p, null);
+      expandSketchIfNeeded(p.x, p.y);
     }
     activeDrawing = {
       id: nextId++, type: tool,
@@ -2344,9 +2504,10 @@
       draw();
       return;
     }
-    if (activeDrawing.type === "measure" || activeDrawing.type === "reference") {
-      const sn = findSnap(p);
-      if (sn) { p = { x: sn.x, y: sn.y }; snapPoint = sn; } else snapPoint = null;
+    if (["measure", "reference", "line", "rect", "circle", "freehand"].includes(activeDrawing.type)) {
+      const from = { x: activeDrawing.x1, y: activeDrawing.y1 };
+      p = refineDrawPoint(p, from);
+      expandSketchIfNeeded(p.x, p.y);
     }
     activeDrawing.x2 = p.x; activeDrawing.y2 = p.y;
     if (activeDrawing.type === "freehand") {
