@@ -157,14 +157,16 @@
         </details>      </div>
 
       <details class="tool-details dimension-tools">
-        <summary>Maßbasierte Skizze &amp; Vorlagen <span class="summary-hint">Rechteck, Korpus</span></summary>
+        <summary>Maßbasierte Skizze &amp; Vorlagen <span class="summary-hint">Korpus, Tür, Schublade</span></summary>
         <div class="dimension-form">
           <label>Breite (mm)<input id="sketchWidthMm" type="number" min="1" max="100000" step="1" value="800" inputmode="decimal"></label>
           <label>Höhe (mm)<input id="sketchHeightMm" type="number" min="1" max="100000" step="1" value="600" inputmode="decimal"></label>
           <button id="addDimensionRect" type="button">Rechteck erzeugen</button>
-          <button id="addKorpusTemplate" class="secondary" type="button">Korpus-Vorlage</button>
+          <button id="addKorpusTemplate" class="secondary" type="button">Korpus</button>
+          <button id="addDoorTemplate" class="secondary" type="button">Tür</button>
+          <button id="addDrawerTemplate" class="secondary" type="button">Schublade</button>
         </div>
-        <p class="hint">Rechteck oder Korpus (Außenkontur + Boden/Deckel-Andeutung) mit Breite/Höhe-Maßlinien. Maßstab gilt danach für weitere Maße.</p>
+        <p class="hint">Vorlagen mit B/H und Maßlinien. Tür = Front mit Band &amp; Griff · Schublade = Front mit Griff. Maßstab gilt danach für weitere Maße.</p>
       </details>
       <div class="button-row action-row">
         <button id="undo" class="secondary" type="button" disabled>↶ Zurück</button>

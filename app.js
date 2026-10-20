@@ -1266,12 +1266,14 @@
     else { setSketchBackground(); scheduleAutosave(); }
   });
 
-  $("addDimensionRect").addEventListener("click", () => {
-    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe anschließend erneut auf „Rechteck erzeugen“."); return; }
-    const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
-    if (!(wMm > 0 && hMm > 0 && Number.isFinite(wMm) && Number.isFinite(hMm))) { alert("Bitte Breite und Höhe größer als 0 mm eingeben."); return; }
+  /** Gemeinsame Vorbereitung für maßstäbliche Vorlagen (Rechteck, Korpus, Tür, Schublade) */
+  function prepareTemplatePlacement(wMm, hMm) {
+    if (!photoLoaded) return null;
+    if (!(wMm > 0 && hMm > 0 && Number.isFinite(wMm) && Number.isFinite(hMm))) {
+      alert("Bitte Breite und Höhe größer als 0 mm eingeben.");
+      return null;
+    }
     if (canvasMode !== "sketch") setSketchBackground();
-    // Fester, lesbarer Maßstab (nicht „alles reinquetschen“): ca. 1 px/mm, bei sehr großen Teilen 0.5
     let pxPerMm = sketchScalePxPerMm > 0 ? sketchScalePxPerMm : 1;
     if (!(pxPerMm > 0)) pxPerMm = 1;
     if (wMm * pxPerMm > SKETCH_MAX_SIDE * 0.85 || hMm * pxPerMm > SKETCH_MAX_SIDE * 0.85) pxPerMm = Math.min(pxPerMm, 0.5);
@@ -1287,32 +1289,46 @@
     const rw = wMm * pxPerMm, rh = hMm * pxPerMm;
     const x1 = (canvas.width - rw) / 2, y1 = (canvas.height - rh) / 2;
     const x2 = x1 + rw, y2 = y1 + rh;
-    remember();
-    const id = nextId++;
-    const col = colorInput.value || "#ff3b30";
-    const endSt = dimensionEndStyle.value || "slash";
-    const endSz = Number(dimensionEndSize.value) || 10;
-    const extOn = dimensionExtensionLines.checked;
-    drawings.push({ id, type: "rect", x1, y1, x2, y2, color: col, width: Number(widthInput.value) || 4, fill: false, fillOpacity: 1, rotation: 0, layer: "sketch" });
     const offset = Math.max(28, Math.min(canvas.width, canvas.height) * 0.045);
-    // Breite: Maßlinie unter dem Rechteck, Hilfslinien von der Unterkante
+    return {
+      pxPerMm, x1, y1, x2, y2, rw, rh, offset,
+      col: colorInput.value || "#ff3b30",
+      lw: Number(widthInput.value) || 4,
+      endSt: dimensionEndStyle.value || "slash",
+      endSz: Number(dimensionEndSize.value) || 10,
+      extOn: dimensionExtensionLines.checked
+    };
+  }
+
+  function pushWHMeasures(x1, y1, x2, y2, wMm, hMm, col, endSt, endSz, extOn, offset, prefixB, prefixH) {
     measures.push({
       id: nextId++, x1, y1: y2 + offset, x2, y2: y2 + offset,
       baseX1: x1, baseY1: y2, baseX2: x2, baseY2: y2,
       type: "linear", value: String(Math.round(wMm * 100) / 100), unit: " mm",
       color: col, textBg: true, locked: false, labelLocked: false,
-      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "", labelSuffix: "",
+      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: prefixB || "", labelSuffix: "",
       endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
     });
-    // Höhe: Maßlinie links vom Rechteck, Hilfslinien von der linken Kante
     measures.push({
       id: nextId++, x1: x1 - offset, y1, x2: x1 - offset, y2,
       baseX1: x1, baseY1: y1, baseX2: x1, baseY2: y2,
       type: "linear", value: String(Math.round(hMm * 100) / 100), unit: " mm",
       color: col, textBg: true, locked: false, labelLocked: false,
-      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "", labelSuffix: "",
+      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: prefixH || "", labelSuffix: "",
       endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
     });
+  }
+
+  $("addDimensionRect").addEventListener("click", () => {
+    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe anschließend erneut auf „Rechteck erzeugen“."); return; }
+    const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
+    const pl = prepareTemplatePlacement(wMm, hMm);
+    if (!pl) return;
+    const { pxPerMm, x1, y1, x2, y2, offset, col, endSt, endSz, extOn, lw } = pl;
+    remember();
+    const id = nextId++;
+    drawings.push({ id, type: "rect", x1, y1, x2, y2, color: col, width: lw, fill: false, fillOpacity: 1, rotation: 0, layer: "sketch" });
+    pushWHMeasures(x1, y1, x2, y2, wMm, hMm, col, endSt, endSz, extOn, offset, "", "");
     sketchScalePxPerMm = pxPerMm; selectedDrawingId = id; selectedId = null;
     updateSketchScaleHint();
     refresh(); setStatus(`Rechteck erstellt: ${wMm} × ${hMm} mm. Maßstab aktiv – weitere Maßlinien werden in mm berechnet.`);
@@ -1320,71 +1336,118 @@
 
   // Korpus-Vorlage: Außenkontur + Boden/Deckel-Linien + Maße
   $("addKorpusTemplate").addEventListener("click", () => {
-    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe erneut auf „Korpus-Vorlage“."); return; }
+    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe erneut auf „Korpus“."); return; }
     const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
-    if (!(wMm > 0 && hMm > 0 && Number.isFinite(wMm) && Number.isFinite(hMm))) { alert("Bitte Breite und Höhe größer als 0 mm eingeben."); return; }
-    if (canvasMode !== "sketch") setSketchBackground();
-    let pxPerMm = sketchScalePxPerMm > 0 ? sketchScalePxPerMm : 1;
-    if (!(pxPerMm > 0)) pxPerMm = 1;
-    if (wMm * pxPerMm > SKETCH_MAX_SIDE * 0.85 || hMm * pxPerMm > SKETCH_MAX_SIDE * 0.85) pxPerMm = Math.min(pxPerMm, 0.5);
-    if (wMm * pxPerMm > SKETCH_MAX_SIDE * 0.9 || hMm * pxPerMm > SKETCH_MAX_SIDE * 0.9) pxPerMm = Math.min(pxPerMm, 0.25);
-    const margin = 400;
-    const needW = Math.ceil(wMm * pxPerMm + margin * 2);
-    const needH = Math.ceil(hMm * pxPerMm + margin * 2);
-    if (needW > sketchCanvasW || needH > sketchCanvasH) {
-      sketchCanvasW = Math.min(SKETCH_MAX_SIDE, Math.max(sketchCanvasW, needW));
-      sketchCanvasH = Math.min(SKETCH_MAX_SIDE, Math.max(sketchCanvasH, needH));
-      ensureSketchCanvasSize();
-    }
-    const rw = wMm * pxPerMm, rh = hMm * pxPerMm;
-    const x1 = (canvas.width - rw) / 2, y1 = (canvas.height - rh) / 2;
-    const x2 = x1 + rw, y2 = y1 + rh;
-    const board = Math.max(12, Math.min(rw, rh) * 0.04); // sichtbare Plattenstärke (optisch)
+    const pl = prepareTemplatePlacement(wMm, hMm);
+    if (!pl) return;
+    const { pxPerMm, x1, y1, x2, y2, rw, rh, offset, col, lw, endSt, endSz, extOn } = pl;
+    const board = Math.max(12, Math.min(rw, rh) * 0.04);
     remember();
-    const col = colorInput.value || "#ff3b30";
-    const lw = Number(widthInput.value) || 4;
-    const endSt = dimensionEndStyle.value || "slash";
-    const endSz = Number(dimensionEndSize.value) || 10;
-    const extOn = dimensionExtensionLines.checked;
-    // Außenkontur
     const outerId = nextId++;
     drawings.push({ id: outerId, type: "rect", x1, y1, x2, y2, color: col, width: lw, fill: false, fillOpacity: 1, rotation: 0, layer: "sketch" });
-    // Deckel (obere Innenlinie)
     drawings.push({ id: nextId++, type: "line", x1, y1: y1 + board, x2, y2: y1 + board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
-    // Boden (untere Innenlinie)
     drawings.push({ id: nextId++, type: "line", x1, y1: y2 - board, x2, y2: y2 - board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
-    // Seiten innen (optional, dezent)
     drawings.push({ id: nextId++, type: "line", x1: x1 + board, y1: y1 + board, x2: x1 + board, y2: y2 - board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
     drawings.push({ id: nextId++, type: "line", x1: x2 - board, y1: y1 + board, x2: x2 - board, y2: y2 - board, color: col, width: Math.max(2, lw - 1), layer: "sketch" });
-    // Beschriftung
     drawings.push({
       id: nextId++, type: "text", x1: x1 + 8, y1: y1 - 12,
       text: `Korpus ${Math.round(wMm)}×${Math.round(hMm)}`, color: col, width: lw,
       fontSize: getFontSize() + 2, textBg: true, layer: "sketch"
     });
-    const offset = Math.max(28, Math.min(canvas.width, canvas.height) * 0.045);
-    measures.push({
-      id: nextId++, x1, y1: y2 + offset, x2, y2: y2 + offset,
-      baseX1: x1, baseY1: y2, baseX2: x2, baseY2: y2,
-      type: "linear", value: String(Math.round(wMm * 100) / 100), unit: " mm",
-      color: col, textBg: true, locked: false, labelLocked: false,
-      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "B", labelSuffix: "",
-      endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
-    });
-    measures.push({
-      id: nextId++, x1: x1 - offset, y1, x2: x1 - offset, y2,
-      baseX1: x1, baseY1: y1, baseX2: x1, baseY2: y2,
-      type: "linear", value: String(Math.round(hMm * 100) / 100), unit: " mm",
-      color: col, textBg: true, locked: false, labelLocked: false,
-      labelOffsetX: 0, labelOffsetY: 0, labelPrefix: "H", labelSuffix: "",
-      endStyle: endSt, endSize: endSz, extensionLines: extOn, layer: "sketch"
-    });
-    sketchScalePxPerMm = pxPerMm;
-    selectedDrawingId = outerId;
-    selectedId = null;
+    pushWHMeasures(x1, y1, x2, y2, wMm, hMm, col, endSt, endSz, extOn, offset, "B", "H");
+    sketchScalePxPerMm = pxPerMm; selectedDrawingId = outerId; selectedId = null;
     updateSketchScaleHint();
     refresh();
-    setStatus(`Korpus ${wMm} × ${hMm} mm – Maßstab aktiv. Fachböden/Türen kannst du ergänzen.`);
+    setStatus(`Korpus ${wMm} × ${hMm} mm – Maßstab aktiv.`);
+  });
+
+  // Tür-Vorlage: Front, Bänder links, Griff rechts
+  $("addDoorTemplate").addEventListener("click", () => {
+    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe erneut auf „Tür“."); return; }
+    const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
+    const pl = prepareTemplatePlacement(wMm, hMm);
+    if (!pl) return;
+    const { pxPerMm, x1, y1, x2, y2, rw, rh, offset, col, lw, endSt, endSz, extOn } = pl;
+    remember();
+    const outerId = nextId++;
+    drawings.push({ id: outerId, type: "rect", x1, y1, x2, y2, color: col, width: lw, fill: false, fillOpacity: 1, rotation: 0, layer: "sketch" });
+    // Bänder (3 Kreise an der linken Kante)
+    const hingeX = x1 + Math.max(10, rw * 0.04);
+    const hingeR = Math.max(6, Math.min(rw, rh) * 0.025);
+    [0.2, 0.5, 0.8].forEach((t) => {
+      const hy = y1 + rh * t;
+      drawings.push({
+        id: nextId++, type: "circle",
+        x1: hingeX, y1: hy, x2: hingeX + hingeR, y2: hy,
+        color: col, width: Math.max(2, lw - 1), fill: false, fillOpacity: 1, layer: "sketch"
+      });
+    });
+    // Griff (vertikale Linie + kleiner Kreis auf der rechten Seite)
+    const handleX = x2 - Math.max(18, rw * 0.12);
+    const handleY = y1 + rh * 0.5;
+    const handleLen = Math.max(24, rh * 0.12);
+    drawings.push({
+      id: nextId++, type: "line",
+      x1: handleX, y1: handleY - handleLen / 2, x2: handleX, y2: handleY + handleLen / 2,
+      color: col, width: Math.max(2, lw - 1), layer: "sketch"
+    });
+    const gr = Math.max(5, hingeR * 0.9);
+    drawings.push({
+      id: nextId++, type: "circle",
+      x1: handleX, y1: handleY, x2: handleX + gr, y2: handleY,
+      color: col, width: Math.max(2, lw - 1), fill: false, fillOpacity: 1, layer: "sketch"
+    });
+    drawings.push({
+      id: nextId++, type: "text", x1: x1 + 8, y1: y1 - 12,
+      text: `Tür ${Math.round(wMm)}×${Math.round(hMm)}`, color: col, width: lw,
+      fontSize: getFontSize() + 2, textBg: true, layer: "sketch"
+    });
+    pushWHMeasures(x1, y1, x2, y2, wMm, hMm, col, endSt, endSz, extOn, offset, "B", "H");
+    sketchScalePxPerMm = pxPerMm; selectedDrawingId = outerId; selectedId = null;
+    updateSketchScaleHint();
+    refresh();
+    setStatus(`Tür ${wMm} × ${hMm} mm – Bänder links, Griff rechts. Maßstab aktiv.`);
+  });
+
+  // Schubladen-Vorlage: Front + Griff mittig
+  $("addDrawerTemplate").addEventListener("click", () => {
+    if (!photoLoaded) { $("newSketch").click(); setStatus("Skizzenfläche wird angelegt. Tippe erneut auf „Schublade“."); return; }
+    const wMm = Number($("sketchWidthMm").value), hMm = Number($("sketchHeightMm").value);
+    const pl = prepareTemplatePlacement(wMm, hMm);
+    if (!pl) return;
+    const { pxPerMm, x1, y1, x2, y2, rw, rh, offset, col, lw, endSt, endSz, extOn } = pl;
+    remember();
+    const outerId = nextId++;
+    drawings.push({ id: outerId, type: "rect", x1, y1, x2, y2, color: col, width: lw, fill: false, fillOpacity: 1, rotation: 0, layer: "sketch" });
+    // Leichte Innenkante (Frontplatte)
+    const inset = Math.max(8, Math.min(rw, rh) * 0.06);
+    drawings.push({
+      id: nextId++, type: "rect",
+      x1: x1 + inset, y1: y1 + inset, x2: x2 - inset, y2: y2 - inset,
+      color: col, width: Math.max(2, lw - 1), fill: false, fillOpacity: 1, rotation: 0, layer: "sketch"
+    });
+    // Horizontaler Griff mittig
+    const hx = (x1 + x2) / 2, hy = (y1 + y2) / 2;
+    const hlen = Math.max(30, rw * 0.28);
+    drawings.push({
+      id: nextId++, type: "line",
+      x1: hx - hlen / 2, y1: hy, x2: hx + hlen / 2, y2: hy,
+      color: col, width: Math.max(3, lw), layer: "sketch"
+    });
+    // Griff-Enden als kleine Kreise
+    const gr = Math.max(4, Math.min(rw, rh) * 0.02);
+    drawings.push({ id: nextId++, type: "circle", x1: hx - hlen / 2, y1: hy, x2: hx - hlen / 2 + gr, y2: hy, color: col, width: Math.max(2, lw - 1), fill: false, fillOpacity: 1, layer: "sketch" });
+    drawings.push({ id: nextId++, type: "circle", x1: hx + hlen / 2, y1: hy, x2: hx + hlen / 2 + gr, y2: hy, color: col, width: Math.max(2, lw - 1), fill: false, fillOpacity: 1, layer: "sketch" });
+    drawings.push({
+      id: nextId++, type: "text", x1: x1 + 8, y1: y1 - 12,
+      text: `Schublade ${Math.round(wMm)}×${Math.round(hMm)}`, color: col, width: lw,
+      fontSize: getFontSize() + 2, textBg: true, layer: "sketch"
+    });
+    pushWHMeasures(x1, y1, x2, y2, wMm, hMm, col, endSt, endSz, extOn, offset, "B", "H");
+    sketchScalePxPerMm = pxPerMm; selectedDrawingId = outerId; selectedId = null;
+    updateSketchScaleHint();
+    refresh();
+    setStatus(`Schublade ${wMm} × ${hMm} mm – Maßstab aktiv.`);
   });
 
   $("addDiameterMeasure").addEventListener("click", () => addDiameterMeasureToSelectedCircle());
