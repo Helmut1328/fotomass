@@ -104,6 +104,8 @@
   let precisionZoomOn = true; // Langdruck-Feinzoom beim Setzen von Maßpunkten
   let precisionZoomTimer = null;
   let precisionZoomState = null; // { viewScale, viewOffsetX, viewOffsetY }
+  let labelStickToLine = true; // Maßzahl standardmäßig an der Linie gekoppelt
+  let measurePlace = null; // { phase:1|2, x1,y1, kind:'measure'|'reference'|'chain', isChain, x,y }
   let pendingFocus = false;
   let pendingTextPoint = null;
   let actionMeasureId = null;
@@ -550,6 +552,38 @@
     }
     if (activeDrawing && !/^(move-|text-place|angle-point)/.test(activeDrawing.type)) {
       if (activeDrawing.type === "measure" || activeDrawing.type === "reference") drawMeasurePreview(g, activeDrawing, k);
+      // Vorschau beim Setzen von Maßpunkten (Punkt 1 / Punkt 2)
+      if (measurePlace || (activeDrawing && activeDrawing.type === "place-point")) {
+        const k2 = K();
+        const cur = activeDrawing && activeDrawing.type === "place-point"
+          ? { x: activeDrawing.x, y: activeDrawing.y }
+          : (measurePlace ? { x: measurePlace.x, y: measurePlace.y } : null);
+        g.save();
+        g.strokeStyle = colorInput.value || "#ff3b30";
+        g.fillStyle = colorInput.value || "#ff3b30";
+        g.lineWidth = 2 * k2;
+        if (measurePlace && measurePlace.phase === 2) {
+          g.setLineDash([6 * k2, 5 * k2]);
+          g.beginPath();
+          g.moveTo(measurePlace.x1, measurePlace.y1);
+          if (cur) g.lineTo(cur.x, cur.y);
+          g.stroke();
+          g.setLineDash([]);
+          g.beginPath();
+          g.arc(measurePlace.x1, measurePlace.y1, 6 * k2, 0, Math.PI * 2);
+          g.fill();
+        }
+        if (cur) {
+          g.beginPath();
+          g.arc(cur.x, cur.y, 7 * k2, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = "rgba(255,255,255,0.9)";
+          g.beginPath();
+          g.arc(cur.x, cur.y, 3 * k2, 0, Math.PI * 2);
+          g.fill();
+        }
+        g.restore();
+      }
       else drawShape(g, activeDrawing, k);
       // CAD: Live-Länge / Radius während des Zeichnens
       const ad = activeDrawing;
@@ -1175,6 +1209,14 @@
     if (tool === "chain" && name !== "chain" && chainSession) {
       // Offene Kette behalten (Segmente bleiben), Session beenden
       finishChainSession(false);
+    }
+    if (name !== "measure" && name !== "chain" && name !== "reference") {
+      measurePlace = null;
+    }
+    if ((tool === "measure" || tool === "chain" || tool === "reference") &&
+        name !== "measure" && name !== "chain" && name !== "reference") {
+      measurePlace = null;
+      exitPrecisionZoom();
     }
     tool = name;
     document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
@@ -2181,6 +2223,15 @@
         if (!precisionZoomOn) exitPrecisionZoom();
       });
     }
+    labelStickToLine = localStorage.getItem("fm-label-stick") !== "0";
+    const ls = $("labelStickToggle");
+    if (ls) {
+      ls.checked = labelStickToLine;
+      ls.addEventListener("change", () => {
+        labelStickToLine = !!ls.checked;
+        try { localStorage.setItem("fm-label-stick", labelStickToLine ? "1" : "0"); } catch (_) {}
+      });
+    }
   } catch (_) {}
 
   function stopSpeech() {
@@ -2662,21 +2713,21 @@
     if (!precisionZoomOn || precisionZoomState) return;
     precisionZoomTimer = setTimeout(() => {
       if (multiTouchMode || !activeDrawing) return;
-      if (pressInfo && Math.hypot(clientX - pressInfo.x, clientY - pressInfo.y) > 18) return;
-      // Nur bei Maß-/Ketten-/Referenz-Zeichnen oder Endpunkt-Verschieben
+      if (pressInfo && Math.hypot(clientX - pressInfo.x, clientY - pressInfo.y) > 22) return;
       const t = activeDrawing.type;
-      if (!(t === "measure" || t === "reference" || t === "move-endpoint")) return;
+      if (!(t === "place-point" || t === "move-endpoint")) return;
       precisionZoomState = { viewScale, viewOffsetX, viewOffsetY };
-      const target = Math.min(8, Math.max(viewScale * 2.6, viewScale + 1.2));
+      const target = Math.min(8, Math.max(viewScale * 2.8, viewScale + 1.4));
       setZoom(target, clientX, clientY);
       try { navigator.vibrate && navigator.vibrate(12); } catch (_) {}
-      setStatus("Feinzoom aktiv – Punkt setzen, dann Finger loslassen");
-    }, 1800);
+      setStatus("Feinzoom – Finger loslassen setzt den Punkt");
+    }, 1600);
   }
   const endGesture = () => {
     activeDrawing = null; pointerStart = null; snapPoint = null; preSnap = null;
     cancelLongPress();
-    exitPrecisionZoom();
+    cancelPrecisionZoomTimer();
+    // Feinzoom erst nach Loslassen zurück, nicht hier – exit in commitPlacePoint / pointerup
   };
 
   function onPointerDown(e) {
@@ -2846,23 +2897,47 @@
       return;
     }
 
-    if (["measure", "chain", "reference", "circle", "line", "rect", "freehand"].includes(tool)) {
+    // Maß / Kette / Referenz: Punkt erst beim Loslassen – Halten = optional Zoom
+    if (tool === "measure" || tool === "chain" || tool === "reference") {
+      const from = (measurePlace && measurePlace.phase === 2)
+        ? { x: measurePlace.x1, y: measurePlace.y1 } : null;
+      p = refineDrawPoint(p, from);
+      expandSketchIfNeeded(p.x, p.y);
+      if (tool === "chain") {
+        if (!chainSession) chainSession = { chainId: nextId++, lastX: null, lastY: null, count: 0 };
+        // Ab 2. Segment: Startpunkt = Ende des letzten Segments (kein neues Punkt-1 nötig)
+        if (chainSession.count > 0 && Number.isFinite(chainSession.lastX) && !(measurePlace && measurePlace.phase === 2)) {
+          measurePlace = {
+            phase: 2, x1: chainSession.lastX, y1: chainSession.lastY,
+            kind: "chain", isChain: true, x: p.x, y: p.y
+          };
+        }
+      }
+      if (!measurePlace) {
+        measurePlace = {
+          phase: 1, kind: tool === "chain" ? "chain" : tool, isChain: tool === "chain",
+          x: p.x, y: p.y
+        };
+      } else {
+        measurePlace.x = p.x; measurePlace.y = p.y;
+      }
+      activeDrawing = { type: "place-point", x: p.x, y: p.y };
+      schedulePrecisionZoom(e.clientX, e.clientY);
+      const ph = measurePlace.phase;
+      setStatus(ph === 1
+        ? "Punkt 1: halten zum Zoomen, loslassen setzt den Punkt"
+        : "Punkt 2: halten zum Zoomen, loslassen setzt den Punkt");
+      draw();
+      return;
+    }
+
+    if (["circle", "line", "rect", "freehand"].includes(tool)) {
       p = refineDrawPoint(p, null);
       expandSketchIfNeeded(p.x, p.y);
     }
-    // Maßkette: ab 2. Segment am Endpunkt des letzten ansetzen
-    let x1 = p.x, y1 = p.y;
-    if (tool === "chain") {
-      if (!chainSession) chainSession = { chainId: nextId++, lastX: null, lastY: null, count: 0 };
-      if (chainSession.count > 0 && Number.isFinite(chainSession.lastX)) {
-        x1 = chainSession.lastX;
-        y1 = chainSession.lastY;
-      }
-    }
     activeDrawing = {
-      id: nextId++, type: tool === "chain" ? "measure" : tool,
-      isChainSegment: tool === "chain",
-      x1, y1, x2: p.x, y2: p.y,
+      id: nextId++, type: tool,
+      x1: p.x, y1: p.y, x2: p.x, y2: p.y,
       color: colorInput.value, width: Number(widthInput.value),
       points: tool === "freehand" ? [p] : undefined,
       fill: (tool === "rect" || tool === "circle") ? !!(rectFillToggle && rectFillToggle.checked) : false,
@@ -2870,10 +2945,6 @@
       value: "", unit: unitSelect.value,
       layer: currentLayer()
     };
-    // Langdruck-Feinzoom für präzises Setzen des Endpunkts
-    if (tool === "measure" || tool === "chain" || tool === "reference") {
-      schedulePrecisionZoom(e.clientX, e.clientY);
-    }
   }
 
   function onPointerMove(e) {
@@ -2903,17 +2974,28 @@
       cancelLongPress();
     }
 
-    // Feinzoom: bei spürbarer Bewegung Timer neu starten (Pause am Endpunkt → Zoom)
+    // Feinzoom: bei Bewegung Timer neu starten (still halten → Zoom)
     if (precisionZoomOn && !precisionZoomState && pressInfo &&
-        (activeDrawing.type === "measure" || activeDrawing.type === "reference" || activeDrawing.type === "move-endpoint")) {
+        (activeDrawing.type === "place-point" || activeDrawing.type === "move-endpoint")) {
       const moved = Math.hypot(e.clientX - pressInfo.x, e.clientY - pressInfo.y);
-      if (moved > 16) {
+      if (moved > 14) {
         pressInfo = { x: e.clientX, y: e.clientY };
         schedulePrecisionZoom(e.clientX, e.clientY);
       }
     }
 
     let p = pointWithCrosshair(e);
+
+    if (activeDrawing.type === "place-point") {
+      const from = (measurePlace && measurePlace.phase === 2)
+        ? { x: measurePlace.x1, y: measurePlace.y1 } : null;
+      p = refineDrawPoint(p, from);
+      expandSketchIfNeeded(p.x, p.y);
+      activeDrawing.x = p.x; activeDrawing.y = p.y;
+      if (measurePlace) { measurePlace.x = p.x; measurePlace.y = p.y; }
+      draw();
+      return;
+    }
 
     if (/^move-/.test(activeDrawing.type) && !activeDrawing.armed) return; // nur auswählen, nichts verschieben
 
@@ -3045,6 +3127,82 @@
 
     const a = activeDrawing;
 
+    // Maßpunkt: erst beim Loslassen festsetzen
+    if (a.type === "place-point") {
+      const px = a.x, py = a.y;
+      cancelPrecisionZoomTimer();
+      exitPrecisionZoom();
+      activeDrawing = null;
+      pointerStart = null;
+      if (!measurePlace) { draw(); return; }
+      if (measurePlace.phase === 1) {
+        measurePlace = {
+          phase: 2,
+          x1: px, y1: py,
+          kind: measurePlace.kind,
+          isChain: measurePlace.isChain,
+          x: px, y: py
+        };
+        setStatus("Punkt 1 gesetzt. Jetzt Punkt 2: halten = Zoom, loslassen = setzen");
+        draw();
+        return;
+      }
+      // Phase 2 → Maß anlegen
+      const x1 = measurePlace.x1, y1 = measurePlace.y1, x2 = px, y2 = py;
+      const isChain = !!measurePlace.isChain;
+      const isRef = measurePlace.kind === "reference";
+      measurePlace = null;
+      if (dist({ x: x1, y: y1 }, { x: x2, y: y2 }) < scr(8)) {
+        setStatus("Strecke zu kurz – erneut versuchen.");
+        draw();
+        return;
+      }
+      pushHistory(preSnap);
+      const id = nextId++;
+      const m = {
+        id, type: isRef ? "reference" : "linear", isReference: isRef,
+        x1, y1, x2, y2,
+        baseX1: x1, baseY1: y1, baseX2: x2, baseY2: y2,
+        extensionLines: isChain ? false : dimensionExtensionLines.checked,
+        endStyle: dimensionEndStyle.value, endSize: Number(dimensionEndSize.value) || 10,
+        value: "", unit: unitSelect.value, color: colorInput.value,
+        textBg: $("textBgToggle").checked, autoCalculated: false, layer: currentLayer(),
+        labelLocked: !!labelStickToLine, labelOffsetX: 0, labelOffsetY: 0
+      };
+      if (isChain && chainSession) {
+        m.chainId = chainSession.chainId;
+        m.chainIndex = chainSession.count;
+      }
+      if (!isRef) {
+        const value = calculatedValueFor(m, m.unit);
+        if (value !== null) { m.value = value; m.autoCalculated = true; }
+      }
+      measures.push(m);
+      selectedId = id;
+      if (isChain && chainSession) {
+        chainSession.lastX = x2;
+        chainSession.lastY = y2;
+        chainSession.count += 1;
+        syncChainActions();
+      }
+      refresh();
+      if (m.chainId) {
+        const tot = chainTotalMm(m.chainId);
+        if (m.autoCalculated && tot) {
+          setStatus(`Segment ${chainSession ? chainSession.count : "?"} · Summe ${fmt(tot.display)}${tot.unit} – weiter oder „Kette fertig“`);
+        } else if (!m.autoCalculated) {
+          openValueDialog(id, { isNew: true, fromPointer: true });
+        } else {
+          setStatus("Segment gesetzt – nächstes anhängen oder Kette fertig.");
+        }
+      } else if (m.isReference || !m.autoCalculated) {
+        openValueDialog(id, { isNew: true, fromPointer: true });
+      } else {
+        setStatus(`Berechnet: ${fmt(m.value)}${m.unit || " mm"}. Doppel-Tipp zum Ändern.`);
+      }
+      return;
+    }
+
     if (a.type === "angle-point") {
       const beforeAngleTap = preSnap;
       anglePoints.push({x:a.p.x,y:a.p.y}); endGesture();
@@ -3117,13 +3275,13 @@
         const now = Date.now();
         if (lastTap.id === a.id && now - lastTap.time < 450) {
           lastTap = { id: null, time: 0 };
-          endGesture(); draw(); renderMeasureList();
+          endGesture(); exitPrecisionZoom(); draw(); renderMeasureList();
           openValueDialog(a.id, { fromPointer: true });
           return;
         }
         lastTap = { id: a.id, time: now };
       }
-      endGesture(); draw(); renderMeasureList();
+      endGesture(); exitPrecisionZoom(); draw(); renderMeasureList();
       return;
     }
 
