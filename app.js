@@ -101,6 +101,9 @@
   let lastTap = { id: null, time: 0 };
   let longPressTimer = null;
   let pressInfo = null;
+  let precisionZoomOn = true; // Langdruck-Feinzoom beim Setzen von Maßpunkten
+  let precisionZoomTimer = null;
+  let precisionZoomState = null; // { viewScale, viewOffsetX, viewOffsetY }
   let pendingFocus = false;
   let pendingTextPoint = null;
   let actionMeasureId = null;
@@ -627,49 +630,35 @@
   }
 
   function drawChainTotals(g, k, forExport) {
+    // Gesamtmaß als echte Maßlinie: erster Punkt → letzter Punkt, parallel mit Abstand
     const ids = [...new Set(visibleMeasures().filter((m) => m.chainId).map((m) => m.chainId))];
     ids.forEach((cid) => {
       const segs = chainSegments(cid);
-      if (segs.length < 1) return;
+      if (segs.length < 2) return;
       const tot = chainTotalMm(cid);
       if (!tot) return;
-      // Position: Mitte der Kette (Schwerpunkt der Segmente)
-      let sx = 0, sy = 0;
-      segs.forEach((m) => { sx += (m.x1 + m.x2) / 2; sy += (m.y1 + m.y2) / 2; });
-      sx /= segs.length; sy /= segs.length;
-      // etwas unterhalb, damit Einzelmaße nicht überdeckt werden
-      const last = segs[segs.length - 1];
-      const ang = Math.atan2(last.y2 - last.y1, last.x2 - last.x1);
-      const ox = Math.cos(ang + Math.PI / 2) * (22 * k);
-      const oy = Math.sin(ang + Math.PI / 2) * (22 * k);
-      const label = segs.length > 1
-        ? `Σ ${fmt(tot.display)}${tot.unit}  (${tot.count}×)`
-        : `Σ ${fmt(tot.display)}${tot.unit}`;
-      const fs = Math.max(getFontSize() + 2, 14) * k;
-      g.save();
-      g.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
-      const tw = g.measureText(label).width;
-      const th = fs + 8 * k;
-      const x = sx + ox, y = sy + oy;
-      g.fillStyle = "rgba(23, 107, 135, 0.95)";
-      g.strokeStyle = "#176b87";
-      g.lineWidth = Math.max(1, 1.5 * k);
-      const rx = x - tw / 2 - 8 * k, ry = y - th / 2;
-      g.beginPath();
-      const rr = 6 * k;
-      g.moveTo(rx + rr, ry);
-      g.arcTo(rx + tw + 16 * k, ry, rx + tw + 16 * k, ry + th, rr);
-      g.arcTo(rx + tw + 16 * k, ry + th, rx, ry + th, rr);
-      g.arcTo(rx, ry + th, rx, ry, rr);
-      g.arcTo(rx, ry, rx + tw + 16 * k, ry, rr);
-      g.closePath();
-      g.fill();
-      g.fillStyle = "#fff";
-      g.textAlign = "center";
-      g.textBaseline = "middle";
-      g.fillText(label, x, y);
-      g.restore();
-      // Verbindungspunkte der Kette markieren
+      const first = segs[0], last = segs[segs.length - 1];
+      const bx1 = first.x1, by1 = first.y1, bx2 = last.x2, by2 = last.y2;
+      const ang = Math.atan2(by2 - by1, bx2 - bx1);
+      // senkrecht versetzen, damit Einzelmaße nicht überdeckt werden
+      const distOff = Math.max(48, 36 * k);
+      const nx = -Math.sin(ang), ny = Math.cos(ang);
+      const x1 = bx1 + nx * distOff, y1 = by1 + ny * distOff;
+      const x2 = bx2 + nx * distOff, y2 = by2 + ny * distOff;
+      const virtual = {
+        id: -cid, type: "linear",
+        x1, y1, x2, y2,
+        baseX1: bx1, baseY1: by1, baseX2: bx2, baseY2: by2,
+        extensionLines: true,
+        endStyle: (dimensionEndStyle && dimensionEndStyle.value) || "slash",
+        endSize: Number(dimensionEndSize && dimensionEndSize.value) || 10,
+        value: tot.display, unit: tot.unit,
+        labelPrefix: "Σ", labelSuffix: "",
+        color: "#176b87", textBg: true,
+        isChainTotal: true
+      };
+      drawMeasure(g, virtual, k, forExport);
+      // Verbindungspunkte der Kette
       if (!forExport) {
         segs.forEach((m, i) => {
           if (i === 0) return;
@@ -2181,6 +2170,18 @@
   } catch (_) {}
   optAutoConfirm.addEventListener("change", () => { try { localStorage.setItem("fm-autoconfirm", optAutoConfirm.checked ? "1" : "0"); } catch (_) {} });
   optAutoMic.addEventListener("change", () => { try { localStorage.setItem("fm-automic", optAutoMic.checked ? "1" : "0"); } catch (_) {} });
+  try {
+    precisionZoomOn = localStorage.getItem("fm-precision-zoom") !== "0";
+    const pz = $("precisionZoomToggle");
+    if (pz) {
+      pz.checked = precisionZoomOn;
+      pz.addEventListener("change", () => {
+        precisionZoomOn = !!pz.checked;
+        try { localStorage.setItem("fm-precision-zoom", precisionZoomOn ? "1" : "0"); } catch (_) {}
+        if (!precisionZoomOn) exitPrecisionZoom();
+      });
+    }
+  } catch (_) {}
 
   function stopSpeech() {
     clearTimeout(dlg.confirmTimer);
@@ -2644,7 +2645,39 @@
 
   // ---------- Zeigerbedienung: 1 Finger = Werkzeug, 2 Finger = Zoom + Schieben ----------
   const cancelLongPress = () => { clearTimeout(longPressTimer); longPressTimer = null; };
-  const endGesture = () => { activeDrawing = null; pointerStart = null; snapPoint = null; preSnap = null; cancelLongPress(); };
+  const cancelPrecisionZoomTimer = () => { clearTimeout(precisionZoomTimer); precisionZoomTimer = null; };
+  function exitPrecisionZoom() {
+    cancelPrecisionZoomTimer();
+    if (!precisionZoomState) return;
+    const s = precisionZoomState;
+    precisionZoomState = null;
+    viewScale = s.viewScale;
+    viewOffsetX = s.viewOffsetX;
+    viewOffsetY = s.viewOffsetY;
+    applyViewTransform();
+    draw();
+  }
+  function schedulePrecisionZoom(clientX, clientY) {
+    cancelPrecisionZoomTimer();
+    if (!precisionZoomOn || precisionZoomState) return;
+    precisionZoomTimer = setTimeout(() => {
+      if (multiTouchMode || !activeDrawing) return;
+      if (pressInfo && Math.hypot(clientX - pressInfo.x, clientY - pressInfo.y) > 18) return;
+      // Nur bei Maß-/Ketten-/Referenz-Zeichnen oder Endpunkt-Verschieben
+      const t = activeDrawing.type;
+      if (!(t === "measure" || t === "reference" || t === "move-endpoint")) return;
+      precisionZoomState = { viewScale, viewOffsetX, viewOffsetY };
+      const target = Math.min(8, Math.max(viewScale * 2.6, viewScale + 1.2));
+      setZoom(target, clientX, clientY);
+      try { navigator.vibrate && navigator.vibrate(12); } catch (_) {}
+      setStatus("Feinzoom aktiv – Punkt setzen, dann Finger loslassen");
+    }, 1800);
+  }
+  const endGesture = () => {
+    activeDrawing = null; pointerStart = null; snapPoint = null; preSnap = null;
+    cancelLongPress();
+    exitPrecisionZoom();
+  };
 
   function onPointerDown(e) {
     if (!photoLoaded) return;
@@ -2696,17 +2729,21 @@
         activeDrawing = hit.endpoint
           ? { type: "move-endpoint", id: hit.measure.id, endpoint: hit.endpoint, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2, x3: hit.measure.x3, y3: hit.measure.y3 } }
           : { type: "move-measure", id: hit.measure.id, dx: p.x, dy: p.y, moved: false, changed: false, armed, original: { x1: hit.measure.x1, y1: hit.measure.y1, x2: hit.measure.x2, y2: hit.measure.y2, x3: hit.measure.x3, y3: hit.measure.y3 } };
-        // langes Drücken ohne Bewegen -> Menü
+        // langes Drücken ohne Bewegen -> Menü (nur wenn kein Endpunkt-Feinzoom)
         cancelLongPress();
-        longPressTimer = setTimeout(() => {
-          if (activeDrawing && !activeDrawing.moved && !multiTouchMode && /^move-/.test(activeDrawing.type)) {
-            const id = activeDrawing.id;
-            endGesture();
-            hideCrosshair();
-            try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
-            openActionDialog(id);
-          }
-        }, 550);
+        if (hit.endpoint && armed) {
+          schedulePrecisionZoom(e.clientX, e.clientY);
+        } else {
+          longPressTimer = setTimeout(() => {
+            if (activeDrawing && !activeDrawing.moved && !multiTouchMode && /^move-/.test(activeDrawing.type)) {
+              const id = activeDrawing.id;
+              endGesture();
+              hideCrosshair();
+              try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
+              openActionDialog(id);
+            }
+          }, 550);
+        }
       } else {
         selectedId = null;
         syncQuickMeasureLock();
@@ -2833,6 +2870,10 @@
       value: "", unit: unitSelect.value,
       layer: currentLayer()
     };
+    // Langdruck-Feinzoom für präzises Setzen des Endpunkts
+    if (tool === "measure" || tool === "chain" || tool === "reference") {
+      schedulePrecisionZoom(e.clientX, e.clientY);
+    }
   }
 
   function onPointerMove(e) {
@@ -2860,6 +2901,16 @@
       if (!pressInfo || Math.hypot(e.clientX - pressInfo.x, e.clientY - pressInfo.y) < 8) return;
       activeDrawing.moved = true;
       cancelLongPress();
+    }
+
+    // Feinzoom: bei spürbarer Bewegung Timer neu starten (Pause am Endpunkt → Zoom)
+    if (precisionZoomOn && !precisionZoomState && pressInfo &&
+        (activeDrawing.type === "measure" || activeDrawing.type === "reference" || activeDrawing.type === "move-endpoint")) {
+      const moved = Math.hypot(e.clientX - pressInfo.x, e.clientY - pressInfo.y);
+      if (moved > 16) {
+        pressInfo = { x: e.clientX, y: e.clientY };
+        schedulePrecisionZoom(e.clientX, e.clientY);
+      }
     }
 
     let p = pointWithCrosshair(e);
